@@ -1,0 +1,7 @@
+# Shell scripts and module metadata are packaged into the flashable zip as-is,
+# so they must keep LF endings even when the repository is checked out on
+# Windows. A CRLF `update-binary` fails to execute in the Magisk installer.
+module/** text eol=lf
+
+*.sh text eol=lf
+*.prop text eol=lf
