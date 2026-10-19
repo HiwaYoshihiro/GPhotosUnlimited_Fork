@@ -10,6 +10,7 @@
 - Reject out-of-range numbers in the Advanced Settings instead of wrapping them, and check each spoof toggle separately so a negative value cannot cancel a positive one.
 - Fix multi-byte UTF-8 characters being corrupted in a JSON config that contains comments.
 - Release the JNI local references `inject()` creates on every failure path, not just on success.
+- Keep the dex buffer that the in-memory classloader reads alive for the life of the process. The C++ version did this by accident (`std::vector::clear()` does not free the allocation); dropping it after injection could leave ART reading freed memory.
 - Check the result of `shadowhook_init()`, and only log spoofed properties when `verboseLogs` is enabled.
 
 ## Google Photos Unlimited v5

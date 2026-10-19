@@ -79,7 +79,7 @@ Cargo is invoked from CMake with the NDK's own clang wrapper, derived from the t
 Layout:
 
 - `app/src/main/native/rust/` — the Rust module (`module.rs` for the Zygisk callbacks, `hook.rs` for the system property hook, `config.rs` for the config parsing, `setfield.rs` for the JNI helper).
-- `app/src/main/cpp/` — the CMake glue and the export list; shadowhook is fetched at configure time.
+- `app/src/main/cpp/` — the CMake glue and the export list; shadowhook is fetched at configure time. `abi_check/` holds a vendored `zygisk.hpp` and compile-time assertions that the Rust struct layouts match it on both ABIs.
 - `app/src/main/java/` — the dex injected into Google Photos.
 
 ## Credits

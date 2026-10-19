@@ -87,8 +87,10 @@ unsafe extern "C" fn my_system_property_read_callback(
         return;
     };
 
-    // Null arguments go straight through, exactly as before: the platform is
-    // allowed to ask for the raw callback without a cookie.
+    // A null `pi` or a null callback cannot be wrapped: there is nothing to
+    // read and no function to call. Pass those straight through. A null
+    // *cookie* is fine now, because the context below carries it instead of the
+    // old global map being keyed on it, so those reads get spoofed too.
     match callback {
         Some(callback) if !pi.is_null() => {
             // The real implementation calls `callback` before returning, so a

@@ -53,6 +53,16 @@ impl<T> Global<T> {
 struct State {
     env: *mut JNIEnv,
     dex: Vec<u8>,
+    /// The dex buffer handed to `InMemoryDexClassLoader`, kept alive for the
+    /// life of the process. Deliberately separate from `dex`: `dex` is emptied
+    /// after injection, exactly as `dexVector.clear()` did, and doubles as the
+    /// "payload already consumed" marker.
+    ///
+    /// `NewDirectByteBuffer` does not copy, and ART has both mapped and copied
+    /// that memory across releases. The C++ module kept the allocation alive by
+    /// accident (`std::vector::clear()` does not release it), so hold it here
+    /// explicitly instead of freeing memory the classloader may still read.
+    retained_dex: Vec<u8>,
     json: Map<String, Value>,
     settings: Settings,
 }
@@ -120,6 +130,7 @@ pub unsafe extern "C" fn zygisk_module_entry(table: *mut ApiTable, env: *mut JNI
     (*state_ptr()) = Some(State {
         env,
         dex: Vec::new(),
+        retained_dex: Vec::new(),
         json: Map::new(),
         settings: Settings::default(),
     });
@@ -332,10 +343,22 @@ unsafe extern "C" fn post_app_specialize(_impl: *mut c_void, _args: *const AppSp
         || settings.spoof_features > 0;
     if spoof_java {
         inject(env, &dex, &json, settings);
+        // `inject` handed this exact buffer to `InMemoryDexClassLoader` through
+        // a direct ByteBuffer, so the allocation must outlive the call. See
+        // `State::retained_dex`. Zygisk calls this once per process; if that
+        // ever changed, leaking the newer buffer is safer than freeing memory
+        // an earlier classloader may still be reading.
+        if let Some(state_ref) = (*state_ptr()).as_mut() {
+            if state_ref.retained_dex.is_empty() {
+                state_ref.retained_dex = dex;
+            } else {
+                core::mem::forget(dex);
+            }
+        }
     }
 
-    // `dex` and `json` are dropped here, freeing the buffers promptly as
-    // `dexVector.clear()` / `json.clear()` did.
+    // `json` is dropped here, matching `json.clear()`. The classloader's dex
+    // buffer is now owned by `STATE` instead of being freed.
 }
 
 unsafe extern "C" fn pre_server_specialize(_impl: *mut c_void, _args: *mut ServerSpecializeArgs) {
