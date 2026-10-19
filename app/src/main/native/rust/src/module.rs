@@ -13,6 +13,7 @@ use crate::config::{self, Settings};
 use crate::filter;
 use crate::hook;
 use crate::jni;
+use crate::limits::{MAX_CONFIG_SIZE, MAX_DEX_SIZE};
 use crate::logd;
 use crate::setfield;
 use crate::zygisk::{
@@ -20,15 +21,10 @@ use crate::zygisk::{
     FORCE_DENYLIST_UNMOUNT, ZYGISK_API_VERSION,
 };
 
-/// Largest payload accepted from the companion.
-///
-/// The sizes arrive over a socket as `c_long`, and both buffers used to be
-/// allocated from them unchecked, so a corrupt or mismatched companion could
-/// ask for a multi-gigabyte allocation inside the app process. The real dex is
-/// about 20 KiB and the config is smaller than that; these caps leave a wide
-/// margin while keeping the worst case bounded.
-const MAX_DEX_SIZE: libc::c_long = 32 * 1024 * 1024;
-const MAX_CONFIG_SIZE: libc::c_long = 1024 * 1024;
+/// The limits are `u64` because the companion compares them against file sizes;
+/// the sizes on the wire are `c_long`, so compare in that type.
+const MAX_DEX_SIZE_WIRE: libc::c_long = MAX_DEX_SIZE as libc::c_long;
+const MAX_CONFIG_SIZE_WIRE: libc::c_long = MAX_CONFIG_SIZE as libc::c_long;
 
 /// Process-wide mutable state.
 ///
@@ -250,7 +246,7 @@ unsafe extern "C" fn pre_app_specialize(_impl: *mut c_void, args: *mut AppSpecia
         close_module();
         return;
     }
-    if dex_size > MAX_DEX_SIZE || config_size > MAX_CONFIG_SIZE {
+    if dex_size > MAX_DEX_SIZE_WIRE || config_size > MAX_CONFIG_SIZE_WIRE {
         libc::close(fd);
         logd!(
             "Refusing oversized payload from companion: dex {} bytes, config {} bytes",

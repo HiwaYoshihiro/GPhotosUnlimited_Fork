@@ -8,6 +8,7 @@
 pub mod config;
 pub mod filter;
 pub mod jni;
+pub mod limits;
 pub mod props;
 pub mod zygisk;
 

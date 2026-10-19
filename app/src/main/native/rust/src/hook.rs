@@ -36,9 +36,9 @@ pub unsafe fn install(props: Props, verbose_logs: i32) {
     props::set_verbose(verbose_logs);
     props::install_props(props);
 
-    let errno = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
-    if errno != 0 {
-        logd!("Couldn't initialize shadowhook. Error: {}", errno);
+    let init_result = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
+    if init_result != 0 {
+        logd!("Couldn't initialize shadowhook. Error: {}", init_result);
         return;
     }
 
