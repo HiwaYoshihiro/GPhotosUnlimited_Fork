@@ -1,3 +1,9 @@
+## Google Photos Unlimited v6.1
+
+- Build the strings handed to the dex-injected half with `NewString` and UTF-16 instead of `NewStringUTF`. `NewStringUTF` expects modified UTF-8, so a config value containing a character outside the BMP (an emoji, for example) was passed outside the JNI contract.
+- Clear a pending JNI exception when string creation fails. Both call sites logged a null return and continued, which left the exception set for the next JNI call made on that thread.
+- Make the companion's size limit a hard cap. The size was checked with `fs::metadata` and then read with `fs::read`, so a file that grew or was replaced in between was still read in full.
+
 ## Google Photos Unlimited v6
 
 - Port the native module from C++ to Rust. Behaviour, config files, log tags and the module layout are unchanged. shadowhook remains C and the dex-injected half remains Java.

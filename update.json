@@ -1,6 +1,6 @@
 {
-    "version": "v6",
-    "versionCode": 60000,
-    "zipUrl": "https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases/download/v6/GPhotosUnlimited-v6.zip",
+    "version": "v6.1",
+    "versionCode": 60010,
+    "zipUrl": "https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases/download/v6.1/GPhotosUnlimited-v6.1.zip",
     "changelog": "https://raw.githubusercontent.com/HiwaYoshihiro/GPhotosUnlimited_Fork/main/CHANGELOG.md"
 }

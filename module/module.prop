@@ -1,7 +1,7 @@
 id=unlimitedphotos
 name=Google Photos Unlimited Backup
-version=v6
-versionCode=60000
+version=v6.1
+versionCode=60010
 author=HiwaYoshihiro - based on Rev4N, credits to osm0sis & chiteroman
 description=Unlimited Google Photos storage by spoofing a Pixel build and Pixel-only features, per-process only, with no /system changes.
 updateJson=https://raw.githubusercontent.com/HiwaYoshihiro/GPhotosUnlimited_Fork/main/update.json
