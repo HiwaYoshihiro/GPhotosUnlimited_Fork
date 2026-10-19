@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(unlimitedphotos C ASM)
 
+# C++ is enabled only for the ABI cross-check translation unit at the bottom of
+# this file; no C++ is linked into the module.
+enable_language(CXX)
+
 # The native module is Rust (see ../native/rust). shadowhook stays C: it is an
 # inline-hook engine written against the ARM/ARM64 instruction encodings and has
 # no Rust equivalent. No C++ is compiled any more, so libc++ is not needed.
@@ -164,3 +168,27 @@ target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
     C_VISIBILITY_PRESET hidden
 )
+
+# Compile-time ABI cross-check against the real zygisk.hpp, for the target that
+# is actually being built. The object library is built but never linked: it
+# exists so the `static_assert`s fail the build if the hand-written Rust
+# bindings drift from the C++ header on this ABI. `tests/abi.rs` covers the same
+# numbers, but only on the host, where `long` and pointer sizes differ from
+# armeabi-v7a.
+add_library(unlimitedphotos_abi_check OBJECT abi_check/check.cpp)
+set_target_properties(unlimitedphotos_abi_check PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+    CXX_VISIBILITY_PRESET hidden
+)
+# No exceptions or RTTI: the header does not need them, and this keeps the TU
+# from pulling in libc++.
+target_compile_options(unlimitedphotos_abi_check PRIVATE
+    -fno-exceptions
+    -fno-rtti
+)
+target_include_directories(unlimitedphotos_abi_check PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/abi_check
+)
+add_dependencies(${CMAKE_PROJECT_NAME} unlimitedphotos_abi_check)
