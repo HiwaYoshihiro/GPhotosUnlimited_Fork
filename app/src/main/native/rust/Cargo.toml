@@ -1,0 +1,28 @@
+[package]
+name = "unlimitedphotos"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "unlimitedphotos"
+# Linked into the final libunlimitedphotos.so by CMake, so the Zygisk loader
+# keeps a single shared object to dlopen (the module ABI has no notion of a
+# companion .so next to it). The `rlib` is what the integration tests link
+# against; `cargo test` cannot use a `staticlib` as a dependency.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Pinned to 0.3.0 on purpose: 0.3.1 re-exports JNINativeMethod from the 0.4
+# layout, which changes the field types we pass to RegisterNatives.
+jni-sys = "=0.3.0"
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+# A panic inside an app process must never unwind across the JNI / Zygisk
+# boundary; abort is what the previous -fno-exceptions build did as well.
+panic = "abort"
+opt-level = "z"
+lto = true
+codegen-units = 1

@@ -1,0 +1,6 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+# Installed automatically by rustup on the first `cargo build`; keeps local
+# builds and CI in sync with the ABIs in app/build.gradle.kts.
+targets = ["aarch64-linux-android", "armv7-linux-androideabi"]

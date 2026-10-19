@@ -14,6 +14,8 @@ android {
 
     packaging {
         jniLibs {
+            // Supplied by the platform at runtime; packaging it would shadow the
+            // device's copy.
             excludes += "**/liblog.so"
         }
     }
@@ -32,14 +34,11 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += "-DANDROID_STL=none"
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
-
-                cppFlags += "-std=c++23"
-                cppFlags += "-fno-exceptions"
-                cppFlags += "-fno-rtti"
-                cppFlags += "-fvisibility=hidden"
-                cppFlags += "-fvisibility-inlines-hidden"
+                // No C++ is compiled any more (the native module is Rust and
+                // shadowhook is C), so there is no STL to select. The previous
+                // -fno-exceptions/-fno-rtti/-fvisibility flags moved into
+                // Cargo.toml and the version script.
             }
         }
     }
@@ -66,8 +65,9 @@ android {
 }
 
 dependencies {
-    implementation("org.lsposed.libcxx:libcxx-full:30.0.16248370")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2")
+    // org.lsposed.libcxx:libcxx-full was only needed to link the C++ module with
+    // -DANDROID_STL=none. Rust links against bionic directly.
 }
 
 tasks.register("copyFiles") {

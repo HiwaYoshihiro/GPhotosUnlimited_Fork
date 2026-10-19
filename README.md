@@ -63,6 +63,25 @@ The advanced spoofing options add granular control over what exactly gets spoofe
 
 </details>
 
+## Building
+
+The native module is written in Rust; shadowhook (the inline-hook engine) stays C, and the dex-injected half is Java. You need the Android SDK/NDK, JDK 21 and a Rust toolchain with the two Android targets:
+
+```sh
+rustup target add aarch64-linux-android armv7-linux-androideabi
+./gradlew assembleRelease
+```
+
+`rust-toolchain.toml` pins the channel and targets, so `rustup` installs them automatically on the first build. The module zip lands in `out/GPhotosUnlimited.zip`.
+
+Cargo is invoked from CMake with the NDK's own clang wrapper, derived from the toolchain the Gradle build already selected. If `cargo` is not on `PATH` (common on Windows right after installing Rust), CMake also checks `~/.cargo/bin` and you can override it with `-DCARGO_EXECUTABLE=...`.
+
+Layout:
+
+- `app/src/main/native/rust/` — the Rust module (`module.rs` for the Zygisk callbacks, `hook.rs` for the system property hook, `config.rs` for the config parsing, `setfield.rs` for the JNI helper).
+- `app/src/main/cpp/` — the CMake glue and the export list; shadowhook is fetched at configure time.
+- `app/src/main/java/` — the dex injected into Google Photos.
+
 ## Credits
 
 Module scripts were adapted from those of osm0sis's Play Integrity Fork (PIFork) module, please see the commit history of [osm0sis's Play Integrity Fork](https://github.com/osm0sis/PlayIntegrityFork) for proper attribution.
