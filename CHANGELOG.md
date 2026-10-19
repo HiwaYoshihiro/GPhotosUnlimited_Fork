@@ -1,4 +1,4 @@
-## Unreleased
+## Google Photos Unlimited v6
 
 - Port the native module from C++ to Rust. Behaviour, config files, log tags and the module layout are unchanged. shadowhook remains C and the dex-injected half remains Java.
 - Drop the `local_cxa_atexit_finalize_impl` submodule and the `nlohmann/json` submodule: Rust has no C++ static destructors to hide from the global `AtexitEntry` array, and `serde_json` replaces the bundled JSON library.
