@@ -5,9 +5,9 @@
 //! invocation is expected; nothing here is shared between connections.
 
 use core::ffi::{c_int, c_long};
-use std::fs;
 use std::mem::size_of;
 
+use crate::file_io::read_capped;
 use crate::limits::{MAX_CONFIG_SIZE, MAX_DEX_SIZE};
 
 const DEX_FILE_PATH: &str = "/data/adb/modules/unlimitedphotos/classes.dex";
@@ -55,36 +55,6 @@ fn read_config() -> Vec<u8> {
 /// which the app side rejects before touching the dex loader.
 fn read_file(path: &str, limit: u64) -> Vec<u8> {
     read_capped(path, limit).unwrap_or_default()
-}
-
-/// Reads `path` only if it is no larger than `limit`.
-///
-/// The size is checked from the metadata before the read, so a file that is
-/// clearly wrong is never pulled into memory. `fs::read` re-checks the length it
-/// actually gets, since the file can grow between the two calls.
-fn read_capped(path: &str, limit: u64) -> Option<Vec<u8>> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > limit {
-        crate::logd!(
-            "Refusing '{}': {} bytes, limit {}",
-            path,
-            metadata.len(),
-            limit
-        );
-        return None;
-    }
-    match fs::read(path) {
-        Ok(bytes) if bytes.len() as u64 <= limit => Some(bytes),
-        Ok(_) => {
-            crate::logd!(
-                "'{}' grew past the {} byte limit while reading",
-                path,
-                limit
-            );
-            None
-        }
-        Err(_) => None,
-    }
 }
 
 /// One `read()`/`write()` can come up short on a socket, which would leave a

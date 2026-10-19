@@ -6,6 +6,7 @@
 //! name and signature.
 
 pub mod config;
+pub mod file_io;
 pub mod filter;
 pub mod jni;
 pub mod limits;
