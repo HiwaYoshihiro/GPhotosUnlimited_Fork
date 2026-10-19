@@ -64,6 +64,23 @@ struct State {
 static STATE: Global<Option<State>> = Global::new(None);
 static API: Global<*mut ApiTable> = Global::new(ptr::null_mut());
 
+/// The module ABI, registered with Zygisk once per process.
+///
+/// A `static` rather than a `Box::into_raw`: Zygisk keeps this pointer for the
+/// life of the process, so a heap allocation could never be reclaimed anyway,
+/// and it was being made in every app process, including the ones that bail out
+/// immediately. `impl_` is filled in with this static's own address.
+static MODULE_ABI: Global<ModuleAbi> = Global::new(ModuleAbi {
+    api_version: ZYGISK_API_VERSION,
+    impl_: ptr::null_mut(),
+    pre_app_specialize: Some(pre_app_specialize),
+    post_app_specialize: Some(post_app_specialize),
+    pre_server_specialize: Some(pre_server_specialize),
+    // Not overridden by the module, but the ABI slot must still be a real
+    // function: Zygisk calls it unconditionally for system_server.
+    post_server_specialize: Some(post_server_specialize),
+});
+
 /// Raw pointer to the state, not `&mut`.
 ///
 /// Handing out `&'static mut Option<State>` from a static would create a new
@@ -90,20 +107,9 @@ pub unsafe extern "C" fn zygisk_module_entry(table: *mut ApiTable, env: *mut JNI
     }
     *API.get() = table;
 
-    // Zygisk keeps this pointer for the life of the process, so it is leaked
-    // deliberately rather than owned by a stack frame.
-    let abi = Box::into_raw(Box::new(ModuleAbi {
-        api_version: ZYGISK_API_VERSION,
-        // `impl` is only ever handed back to the callbacks below; Zygisk never
-        // dereferences it, so pointing at our own state is enough.
-        impl_: ptr::null_mut(),
-        pre_app_specialize: Some(pre_app_specialize),
-        post_app_specialize: Some(post_app_specialize),
-        pre_server_specialize: Some(pre_server_specialize),
-        // Not overridden by the module, but the ABI slot must still be a real
-        // function: Zygisk calls it unconditionally for system_server.
-        post_server_specialize: Some(post_server_specialize),
-    }));
+    let abi = MODULE_ABI.get();
+    // `impl` is only ever handed back to the callbacks below; Zygisk never
+    // dereferences it, so pointing at our own state is enough.
     (*abi).impl_ = abi as *mut c_void;
 
     let Some(register) = (*table).register_module else {

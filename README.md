@@ -29,7 +29,11 @@ If a newly backed-up photo *does* count against your storage, clear Google Photo
 
 ## Troubleshooting
 
-Make sure Google Photos (com.google.android.apps.photos) is NOT on the Magisk DenyList if Enforce DenyList is enabled since this interferes with the module; the module does prevent this using scripts but it only happens once during each reboot.
+Make sure Google Photos (com.google.android.apps.photos) is NOT on the Magisk DenyList if Enforce DenyList is enabled since this interferes with the module. The module no longer changes your DenyList for you; to have it remove Google Photos on each boot, create an empty file at `/data/adb/modules/unlimitedphotos/allow_denylist_fix`. Without that file, check and change it yourself in the Magisk app, or with:
+
+```sh
+su -c "magisk --denylist rm com.google.android.apps.photos"
+```
 
 ### Failing to work (on KernelSU/KernelSU Next/APatch)
 
