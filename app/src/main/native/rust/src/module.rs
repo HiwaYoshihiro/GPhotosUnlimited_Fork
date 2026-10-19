@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::companion::read_full;
 use crate::config::{self, Settings};
+use crate::filter;
 use crate::hook;
 use crate::jni;
 use crate::logd;
@@ -18,8 +19,6 @@ use crate::zygisk::{
     self, ApiTable, AppSpecializeArgs, ModuleAbi, ServerSpecializeArgs, DLCLOSE_MODULE_LIBRARY,
     FORCE_DENYLIST_UNMOUNT, ZYGISK_API_VERSION,
 };
-
-const PHOTOS_PACKAGE: &str = "com.google.android.apps.photos";
 
 /// Process-wide mutable state.
 ///
@@ -152,12 +151,21 @@ unsafe extern "C" fn pre_app_specialize(_impl: *mut c_void, args: *mut AppSpecia
     };
 
     let raw_process = get_utf_chars(env, nice_name, ptr::null_mut());
-    let raw_dir = get_utf_chars(env, app_data_dir, ptr::null_mut());
-
-    if raw_process.is_null() || raw_dir.is_null() {
+    // GetStringUTFChars raises OutOfMemoryError on failure. This runs in every
+    // app process, so a pending exception left here would abort the *next* JNI
+    // call the app makes, not just ours. Clear it before anything else, and do
+    // not make the second JNI call while it is still pending.
+    if jni::failed(env, "Couldn't read the process name") || raw_process.is_null() {
         if !raw_process.is_null() {
             release_utf_chars(env, nice_name, raw_process);
         }
+        close_module();
+        return;
+    }
+
+    let raw_dir = get_utf_chars(env, app_data_dir, ptr::null_mut());
+    if jni::failed(env, "Couldn't read the app data directory") || raw_dir.is_null() {
+        release_utf_chars(env, nice_name, raw_process);
         if !raw_dir.is_null() {
             release_utf_chars(env, app_data_dir, raw_dir);
         }
@@ -171,12 +179,11 @@ unsafe extern "C" fn pre_app_specialize(_impl: *mut c_void, args: *mut AppSpecia
     release_utf_chars(env, nice_name, raw_process);
     release_utf_chars(env, app_data_dir, raw_dir);
 
-    // Google Photos' data dir ends with the package name; its other processes
-    // (":crashpad", ":scheduler", ...) end with that suffix instead.
-    let is_photos = dir
-        .strip_suffix(PHOTOS_PACKAGE)
-        .is_some_and(|prefix| prefix.ends_with('/'));
-    let is_photos_proc = process == PHOTOS_PACKAGE;
+    // Both checks are exact, and both must pass: the main Google Photos
+    // process in the Google Photos data directory. Anything else - another
+    // app, a secondary Photos process, system_server - bails out here.
+    let is_photos = filter::is_photos_data_dir(&dir);
+    let is_photos_proc = filter::is_photos_main_process(&process);
 
     if !is_photos {
         close_module();

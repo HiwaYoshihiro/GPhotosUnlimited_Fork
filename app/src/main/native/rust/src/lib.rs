@@ -6,6 +6,7 @@
 //! name and signature.
 
 pub mod config;
+pub mod filter;
 pub mod zygisk;
 
 mod log;
