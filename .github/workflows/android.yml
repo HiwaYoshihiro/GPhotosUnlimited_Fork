@@ -41,6 +41,16 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    # Cheap host-compiled checks first: the ABI layout assertions and the
+    # config parser, so a broken port fails in seconds instead of after a full
+    # NDK build.
+    - name: Test the native module
+      working-directory: app/src/main/native/rust
+      run: |
+        cargo fmt --check
+        cargo clippy --all-targets -- -D warnings
+        cargo test
+
     - name: Build with Gradle
       run: ./gradlew --warning-mode all assembleRelease
 
