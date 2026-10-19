@@ -3,7 +3,7 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 
 use jni_sys::{jclass, jint, jobject, JNIEnv, JNI_OK};
 use serde_json::{Map, Value};
@@ -463,11 +463,9 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
     }
 
     logd!("JNI: Loading module class");
-    let (Some(call_object_method), Some(new_string_utf), Some(register_natives)) = (
-        table.CallObjectMethod,
-        table.NewStringUTF,
-        table.RegisterNatives,
-    ) else {
+    let (Some(call_object_method), Some(register_natives)) =
+        (table.CallObjectMethod, table.RegisterNatives)
+    else {
         return;
     };
 
@@ -480,12 +478,11 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
     ) else {
         return;
     };
-    let entry_class_name = new_string_utf(env, c"com.rev4n.unlimitedphotos.EntryPoint".as_ptr());
-    refs.push(entry_class_name);
-    if entry_class_name.is_null() {
-        logd!("JNI: Couldn't create the EntryPoint class name");
+    let Some(entry_class_name) = jni::new_string(env, "com.rev4n.unlimitedphotos.EntryPoint")
+    else {
         return;
-    }
+    };
+    refs.push(entry_class_name);
     let entry_class_obj = call_object_method(env, dex_cl, load_class, entry_class_name);
     refs.push(entry_class_obj);
     if jni::failed(env, "Couldn't load module class") {
@@ -517,15 +514,10 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
     // `serde_json` serialises map keys in sorted order, matching what
     // `nlohmann::json::dump()` produced for the Java side.
     let json_text = serde_json::to_string(json).unwrap_or_else(|_| "{}".to_string());
-    let Ok(json_c) = CString::new(json_text) else {
+    let Some(java_str) = jni::new_string(env, &json_text) else {
         return;
     };
-    let java_str = new_string_utf(env, json_c.as_ptr());
     refs.push(java_str);
-    if java_str.is_null() {
-        logd!("JNI: Couldn't create the config string");
-        return;
-    }
     if let Some(call_static_void) = table.CallStaticVoidMethod {
         call_static_void(env, entry_class, receive_json, java_str);
     }

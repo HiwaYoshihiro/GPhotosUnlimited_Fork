@@ -1,4 +1,4 @@
-use jni_sys::{jobject, JNIEnv};
+use jni_sys::{jchar, jobject, jsize, jstring, JNIEnv};
 
 use crate::logd;
 
@@ -27,6 +27,38 @@ pub unsafe fn failed(env: *mut JNIEnv, what: &str) -> bool {
     }
     logd!("JNI: {}", what);
     true
+}
+
+/// Creates a `java.lang.String` from Rust text.
+///
+/// `NewStringUTF` takes *modified* UTF-8, where a character outside the BMP is
+/// written as two three-byte surrogate escapes. A Rust string is plain UTF-8,
+/// which uses one four-byte sequence instead, so handing it to `NewStringUTF`
+/// is outside the JNI contract (CheckJNI rejects it). `NewString` takes UTF-16,
+/// which is exactly what `encode_utf16` produces, so this is correct for every
+/// input and does not need a NUL terminator.
+///
+/// Returns `None` on failure with the pending exception already cleared:
+/// leaving it set would abort the next JNI call made on this thread after
+/// `inject` returns to Zygisk.
+///
+/// # Safety
+/// `env` must be a valid `JNIEnv` for the current thread, or null.
+pub unsafe fn new_string(env: *mut JNIEnv, text: &str) -> Option<jstring> {
+    if env.is_null() {
+        return None;
+    }
+    let new_string = (&**env).NewString?;
+    let utf16: Vec<jchar> = text.encode_utf16().collect();
+    let Ok(len) = jsize::try_from(utf16.len()) else {
+        return None;
+    };
+    let string = new_string(env, utf16.as_ptr(), len);
+    if string.is_null() {
+        failed(env, "Couldn't create a Java string");
+        return None;
+    }
+    Some(string)
 }
 
 type DeleteLocalRef = unsafe extern "system" fn(*mut JNIEnv, jobject);
