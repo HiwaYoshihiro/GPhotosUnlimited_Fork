@@ -4,7 +4,7 @@
 //! callback that rewrites values are in `props.rs` so they can be tested
 //! without a device.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use crate::config::Props;
