@@ -125,6 +125,34 @@ fn parse_int_matches_the_cpp_hand_rolled_parser() {
 }
 
 #[test]
+fn parse_int_accepts_the_full_i32_range() {
+    use unlimitedphotos::config::parse_int;
+
+    assert_eq!(parse_int("2147483647"), Some(i32::MAX));
+    assert_eq!(parse_int("-2147483648"), Some(i32::MIN));
+    assert_eq!(parse_int("+2147483647"), Some(i32::MAX));
+    // Leading zeroes are still digits, and must not be rejected.
+    assert_eq!(parse_int("0002147483647"), Some(i32::MAX));
+    assert_eq!(parse_int("-0"), Some(0));
+}
+
+#[test]
+fn parse_int_rejects_out_of_range_instead_of_wrapping() {
+    use unlimitedphotos::config::parse_int;
+
+    // The old parser wrapped these into unrelated numbers, so a typo could
+    // silently flip a setting.
+    assert_eq!(parse_int("2147483648"), None);
+    assert_eq!(parse_int("-2147483649"), None);
+    assert_eq!(parse_int("4294967296"), None);
+    assert_eq!(parse_int("99999999999"), None);
+    assert_eq!(parse_int("-99999999999"), None);
+    // Long enough to overflow the accumulator itself if it were unchecked.
+    assert_eq!(parse_int(&"9".repeat(100)), None);
+    assert_eq!(parse_int(&format!("-{}", "9".repeat(100))), None);
+}
+
+#[test]
 fn prop_config_parses_like_the_cpp_converter() {
     use serde_json::Value;
     use unlimitedphotos::config::parse_config;

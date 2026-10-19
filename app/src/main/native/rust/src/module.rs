@@ -20,6 +20,16 @@ use crate::zygisk::{
     FORCE_DENYLIST_UNMOUNT, ZYGISK_API_VERSION,
 };
 
+/// Largest payload accepted from the companion.
+///
+/// The sizes arrive over a socket as `c_long`, and both buffers used to be
+/// allocated from them unchecked, so a corrupt or mismatched companion could
+/// ask for a multi-gigabyte allocation inside the app process. The real dex is
+/// about 20 KiB and the config is smaller than that; these caps leave a wide
+/// margin while keeping the worst case bounded.
+const MAX_DEX_SIZE: libc::c_long = 32 * 1024 * 1024;
+const MAX_CONFIG_SIZE: libc::c_long = 1024 * 1024;
+
 /// Process-wide mutable state.
 ///
 /// Zygisk loads the library into the freshly forked child and then calls
@@ -234,6 +244,16 @@ unsafe extern "C" fn pre_app_specialize(_impl: *mut c_void, args: *mut AppSpecia
         close_module();
         return;
     }
+    if dex_size > MAX_DEX_SIZE || config_size > MAX_CONFIG_SIZE {
+        libc::close(fd);
+        logd!(
+            "Refusing oversized payload from companion: dex {} bytes, config {} bytes",
+            dex_size,
+            config_size
+        );
+        close_module();
+        return;
+    }
 
     logd!("Read from file descriptor for 'dex' -> {} bytes", dex_size);
     logd!(
@@ -301,11 +321,14 @@ unsafe extern "C" fn post_app_specialize(_impl: *mut c_void, _args: *const AppSp
         hook::install(props, settings.verbose_logs);
     }
 
-    let spoof_java = settings.spoof_build
-        + settings.spoof_provider
-        + settings.spoof_signature
-        + settings.spoof_features;
-    if spoof_java > 0 {
+    // Each flag is checked on its own. Summing them let a negative value cancel
+    // a positive one, so `spoofBuild=1` plus `spoofProvider=-1` skipped the
+    // injection entirely.
+    let spoof_java = settings.spoof_build > 0
+        || settings.spoof_provider > 0
+        || settings.spoof_signature > 0
+        || settings.spoof_features > 0;
+    if spoof_java {
         inject(env, &dex, &json, settings);
     }
 
@@ -349,10 +372,17 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
         return;
     };
 
+    // Every local reference created below is registered here, so the early
+    // returns (there are many: a stale dex, a missing method, a pending
+    // exception) release them too.
+    let mut refs = jni::LocalRefs::new(env);
+
     logd!("JNI: Getting system classloader");
     let Some(cl_class) = find(env, find_class, c"java/lang/ClassLoader") else {
         return;
     };
+    refs.push(cl_class as jobject);
+
     let Some(get_system_class_loader) = static_method(
         env,
         get_static_method_id,
@@ -366,6 +396,7 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
     if jni::failed(env, "Couldn't get system classloader") {
         return;
     }
+    refs.push(system_class_loader);
 
     logd!("JNI: Creating module classloader");
     let (Some(new_object), Some(new_direct_byte_buffer)) =
@@ -377,6 +408,8 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
     let Some(dex_cl_class) = find(env, find_class, c"dalvik/system/InMemoryDexClassLoader") else {
         return;
     };
+    refs.push(dex_cl_class as jobject);
+
     let Some(dex_cl_init) = method(
         env,
         get_method_id,
@@ -387,8 +420,20 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
         return;
     };
     let buffer = new_direct_byte_buffer(env, dex.as_ptr() as *mut c_void, dex.len() as i64);
+    refs.push(buffer);
+    if jni::failed(env, "Couldn't create the dex buffer") {
+        return;
+    }
+
     let dex_cl = new_object(env, dex_cl_class, dex_cl_init, buffer, system_class_loader);
+    refs.push(dex_cl);
     if jni::failed(env, "Couldn't create module classloader") {
+        return;
+    }
+    // A null object without a pending exception would make the next call a
+    // fatal error rather than a recoverable one.
+    if dex_cl.is_null() {
+        logd!("JNI: InMemoryDexClassLoader returned null");
         return;
     }
 
@@ -411,15 +456,19 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
         return;
     };
     let entry_class_name = new_string_utf(env, c"com.rev4n.unlimitedphotos.EntryPoint".as_ptr());
+    refs.push(entry_class_name);
     if entry_class_name.is_null() {
+        logd!("JNI: Couldn't create the EntryPoint class name");
         return;
     }
     let entry_class_obj = call_object_method(env, dex_cl, load_class, entry_class_name);
+    refs.push(entry_class_obj);
     if jni::failed(env, "Couldn't load module class") {
         return;
     }
     let entry_class = entry_class_obj as jclass;
     if entry_class.is_null() {
+        logd!("JNI: EntryPoint class was not found");
         return;
     }
 
@@ -447,7 +496,9 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
         return;
     };
     let java_str = new_string_utf(env, json_c.as_ptr());
+    refs.push(java_str);
     if java_str.is_null() {
+        logd!("JNI: Couldn't create the config string");
         return;
     }
     if let Some(call_static_void) = table.CallStaticVoidMethod {
@@ -476,21 +527,6 @@ unsafe fn inject(env: *mut JNIEnv, dex: &[u8], json: &Map<String, Value>, settin
         );
     }
     jni::failed(env, "EntryPoint.init threw");
-
-    if let Some(delete) = table.DeleteLocalRef {
-        for reference in [
-            java_str as jobject,
-            cl_class as jobject,
-            system_class_loader,
-            dex_cl_class as jobject,
-            buffer,
-            dex_cl,
-            entry_class_name as jobject,
-            entry_class_obj,
-        ] {
-            delete(env, reference);
-        }
-    }
 }
 
 type FindClass = unsafe extern "system" fn(*mut JNIEnv, *const core::ffi::c_char) -> jclass;

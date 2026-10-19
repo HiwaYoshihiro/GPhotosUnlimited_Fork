@@ -1,24 +1,16 @@
 //! The `__system_property_read_callback` hook.
 //!
-//! Replaces the `std::map` + shadowhook code from `main.cpp`. The property
-//! table is handed over once, before the hook goes live, and is only read
-//! afterwards, so the `const char *` values handed to the platform point into
-//! storage that lives as long as the process does. Returning a pointer to a
-//! temporary here would be a use-after-free inside the property callback.
+//! Only the shadowhook plumbing lives here; the property table and the
+//! callback that rewrites values are in `props.rs` so they can be tested
+//! without a device.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicI32, Ordering};
-use std::collections::{BTreeMap, HashMap};
-use std::ffi::{CStr, CString};
-use std::sync::{Mutex, OnceLock};
 
 use crate::config::Props;
 use crate::logd;
+use crate::props::{self, CallContext, PropertyCallback};
 use crate::zygisk::PropInfo;
-
-/// `void (*)(void *, const char *, const char *, uint32_t)`
-pub type PropertyCallback = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, u32);
 
 /// `void (*)(const prop_info *, void (*)(...), void *)`
 type ReadCallback = unsafe extern "C" fn(*const PropInfo, Option<PropertyCallback>, *mut c_void);
@@ -39,39 +31,16 @@ extern "C" {
 /// The original `__system_property_read_callback`, filled in by shadowhook.
 static mut ORIGINAL: *mut c_void = ptr::null_mut();
 
-/// Property table, immutable once installed.
-static PROPS: OnceLock<BTreeMap<String, CString>> = OnceLock::new();
-static VERBOSE: AtomicI32 = AtomicI32::new(0);
-
-/// Callback registered per cookie.
-///
-/// The old code used an unsynchronised `std::map` here, written from every
-/// thread that reads a property. A `Mutex` fixes that, and the lock is never
-/// held while the callback runs, so a callback that itself reads a property
-/// cannot deadlock.
-static CALLBACKS: Mutex<Option<HashMap<usize, PropertyCallback>>> = Mutex::new(None);
-
 /// Installs the hook. `props` is consumed so its `CString` buffers stay put.
 pub unsafe fn install(props: Props, verbose_logs: i32) {
-    VERBOSE.store(verbose_logs, Ordering::Relaxed);
-    let _ = PROPS.set(
-        props
-            .into_iter()
-            // An interior NUL cannot be represented in a `CString`. `c_str()`
-            // in the old code would hand the platform a buffer that stops at
-            // that NUL anyway, so truncating keeps the same visible value
-            // instead of dropping the override entirely.
-            .map(|(name, value)| {
-                let value = match value.split_once('\0') {
-                    Some((head, _)) => head.to_string(),
-                    None => value,
-                };
-                (name, CString::new(value).unwrap_or_default())
-            })
-            .collect(),
-    );
+    props::set_verbose(verbose_logs);
+    props::install_props(props);
 
-    shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
+    let errno = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
+    if errno != 0 {
+        logd!("Couldn't initialize shadowhook. Error: {}", errno);
+        return;
+    }
 
     // `RTLD_DEFAULT` is `(void *)0` on bionic.
     let sym_addr = libc::dlsym(ptr::null_mut(), c"__system_property_read_callback".as_ptr());
@@ -121,87 +90,18 @@ unsafe extern "C" fn my_system_property_read_callback(
     // Null arguments go straight through, exactly as before: the platform is
     // allowed to ask for the raw callback without a cookie.
     match callback {
-        Some(callback) if !pi.is_null() && !cookie.is_null() => {
-            register(cookie, callback);
-            original(pi, Some(modify_callback), cookie);
+        Some(callback) if !pi.is_null() => {
+            // The real implementation calls `callback` before returning, so a
+            // stack context is safe here. Passing the caller's cookie through
+            // unchanged would force us back to a global map to find the
+            // callback again, and that map was the leak.
+            let mut context = CallContext::new(callback, cookie);
+            original(
+                pi,
+                Some(props::modify_callback),
+                context.as_void_ptr() as *mut c_void,
+            );
         }
         _ => original(pi, callback, cookie),
     }
-}
-
-fn register(cookie: *mut c_void, callback: PropertyCallback) {
-    let mut guard = CALLBACKS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard
-        .get_or_insert_with(HashMap::new)
-        .insert(cookie as usize, callback);
-}
-
-fn lookup(cookie: *mut c_void) -> Option<PropertyCallback> {
-    let guard = CALLBACKS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard.as_ref()?.get(&(cookie as usize)).copied()
-}
-
-unsafe extern "C" fn modify_callback(
-    cookie: *mut c_void,
-    name: *const c_char,
-    value: *const c_char,
-    serial: u32,
-) {
-    if cookie.is_null() || name.is_null() || value.is_null() {
-        return;
-    }
-    let Some(callback) = lookup(cookie) else {
-        return;
-    };
-
-    let old_value = value;
-    let mut new_value = value;
-    let prop = CStr::from_ptr(name).to_string_lossy();
-
-    if let Some(props) = PROPS.get() {
-        if let Some(overridden) = exact(props, &prop).or_else(|| wildcard(props, &prop)) {
-            new_value = overridden;
-        }
-    }
-
-    // Pointer identity, as in the original: "unchanged" means no override was
-    // applied at all.
-    if old_value == new_value {
-        if VERBOSE.load(Ordering::Relaxed) > 99 {
-            logd!("[{}]: {} (unchanged)", prop, string(old_value));
-        }
-    } else {
-        logd!("[{}]: {} -> {}", prop, string(old_value), string(new_value));
-    }
-
-    callback(cookie, name, new_value, serial);
-}
-
-fn exact(props: &BTreeMap<String, CString>, name: &str) -> Option<*const c_char> {
-    props.get(name).map(|value| value.as_ptr())
-}
-
-/// Leading `*` wildcard match. `BTreeMap` keeps the same sorted order
-/// `std::map` had, so the first matching wildcard is still the winner.
-fn wildcard(props: &BTreeMap<String, CString>, name: &str) -> Option<*const c_char> {
-    props
-        .iter()
-        .find(|(key, _)| match key.strip_prefix('*') {
-            Some(suffix) => name.ends_with(suffix),
-            None => false,
-        })
-        .map(|(_, value)| value.as_ptr())
-}
-
-fn string(value: *const c_char) -> String {
-    if value.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(value) }
-        .to_string_lossy()
-        .into_owned()
 }

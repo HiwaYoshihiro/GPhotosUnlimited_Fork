@@ -47,6 +47,11 @@ pub type Props = BTreeMap<String, String>;
 /// and could not use `std::stoi`; keeping the same strict digit-only rules
 /// means a value like `"1 "` or `"0x1"` is still rejected rather than being
 /// interpreted differently.
+///
+/// Out-of-range values are rejected instead of being truncated. The C++ code
+/// wrapped `int` arithmetic, so `"99999999999"` silently became some unrelated
+/// number; a config typo should leave the default in place, not flip a setting
+/// to a value the user never wrote.
 pub fn parse_int(s: &str) -> Option<i32> {
     let bytes = s.as_bytes();
     let mut pos = 0;
@@ -60,17 +65,23 @@ pub fn parse_int(s: &str) -> Option<i32> {
     if pos >= bytes.len() {
         return None;
     }
-    // Accumulate in i64 and truncate like the C++ `int` arithmetic did, so an
-    // out-of-range value behaves the same instead of panicking.
+    // `i32::MIN` has one more representable value than `i32::MAX`, so the
+    // magnitude is allowed to reach `i32::MAX + 1` before the sign is applied.
+    // Capping here also keeps the accumulation well inside `i64`, so a string
+    // of a thousand digits cannot overflow it.
+    const LIMIT: i64 = i32::MAX as i64 + 1;
     let mut value: i64 = 0;
     for &byte in &bytes[pos..] {
         if !byte.is_ascii_digit() {
             return None;
         }
-        value = value.wrapping_mul(10).wrapping_add(i64::from(byte - b'0'));
+        value = value * 10 + i64::from(byte - b'0');
+        if value > LIMIT {
+            return None;
+        }
     }
     let value = if negative { -value } else { value };
-    Some(value as i32)
+    i32::try_from(value).ok()
 }
 
 /// Trims spaces and tabs only. A trailing space in a config value would
@@ -119,7 +130,12 @@ fn strip_comments(text: &str) -> String {
     while i < bytes.len() {
         let byte = bytes[i];
         if in_string {
-            out.push(byte as char);
+            // Copy whole UTF-8 sequences, not bytes. `byte as char` would turn
+            // each byte of a multi-byte character into a separate Latin-1
+            // codepoint and corrupt every non-ASCII value in the config.
+            let ch = text[i..].chars().next().unwrap_or('\u{fffd}');
+            out.push(ch);
+            i += ch.len_utf8();
             if escaped {
                 escaped = false;
             } else if byte == b'\\' {
@@ -127,7 +143,6 @@ fn strip_comments(text: &str) -> String {
             } else if byte == b'"' {
                 in_string = false;
             }
-            i += 1;
             continue;
         }
         match byte {

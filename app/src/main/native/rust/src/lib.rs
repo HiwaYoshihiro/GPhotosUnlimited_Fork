@@ -7,19 +7,19 @@
 
 pub mod config;
 pub mod filter;
+pub mod jni;
+pub mod props;
 pub mod zygisk;
 
 mod log;
 
 // Everything below is Android-only: it calls bionic, JNI and shadowhook. The
 // modules are gated so `cargo test` can still exercise the pure logic (config
-// parsing, ABI layout) on a host machine.
+// parsing, property dispatch, ABI layout) on a host machine.
 #[cfg(target_os = "android")]
 mod companion;
 #[cfg(target_os = "android")]
 mod hook;
-#[cfg(target_os = "android")]
-mod jni;
 #[cfg(target_os = "android")]
 mod module;
 #[cfg(target_os = "android")]
