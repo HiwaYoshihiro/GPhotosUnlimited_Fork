@@ -27,10 +27,6 @@ After installing (and rebooting), **back up a new photo**, then open that photo 
 
 If a newly backed-up photo *does* count against your storage, clear Google Photos app data and reboot, then take another photo and check again.
 
-## About 'custom.app_replace_list.txt' file
-
-You can customize the included default [app_replace_list.txt](https://raw.githubusercontent.com/Rev4N1/GPhotosUnlimited/main/module/app_replace_list.txt) from the module directory (/data/adb/modules/unlimitedphotos) then rename it to custom.app_replace_list.txt to systemlessly replace any additional conflicting custom ROM spoof injection app paths to disable them. Changes take effect after a reboot.
-
 ## Troubleshooting
 
 Make sure Google Photos (com.google.android.apps.photos) is NOT on the Magisk DenyList if Enforce DenyList is enabled since this interferes with the module; the module does prevent this using scripts but it only happens once during each reboot.

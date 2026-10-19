@@ -4,6 +4,8 @@
 - Drop the `local_cxa_atexit_finalize_impl` submodule and the `nlohmann/json` submodule: Rust has no C++ static destructors to hide from the global `AtexitEntry` array, and `serde_json` replaces the bundled JSON library.
 - Drop the `org.lsposed.libcxx` dependency, no longer needed now that no C++ is compiled.
 - JSON configs keep accepting `//` and `/* */` comments, as before.
+- Stop hiding conflicting custom ROM injection apps. The module no longer manages a `system` tree, so it no longer changes the mount namespace of apps other than Google Photos. `app_replace_list.txt` is removed; a leftover `custom.app_replace_list.txt` is ignored and can be deleted.
+- Do not carry `$MODPATH/system` from an older version into the new one. Existing overrides are removed during the update and a reboot is required for that to take effect.
 
 ## Google Photos Unlimited v5
 
