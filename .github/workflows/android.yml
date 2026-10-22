@@ -26,11 +26,13 @@ jobs:
         distribution: 'temurin'
         java-version: 21
 
-    # The native module is Rust; rust-toolchain.toml pins the channel and the
-    # aarch64/armv7 Android targets, so rustup installs them on first use.
+    # rust-toolchain.toml pins the channel and the Android targets, but it lives
+    # in the crate directory, so the version is repeated here for the action.
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: 1.98.1
+        components: rustfmt, clippy
         targets: aarch64-linux-android,armv7-linux-androideabi
 
     - name: Cache Rust build
@@ -41,6 +43,11 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    - name: Lint the module scripts
+      run: |
+        brew install shellcheck
+        shellcheck -x -S warning module/*.sh
+
     # Cheap host-compiled checks first: the ABI layout assertions and the
     # config parser, so a broken port fails in seconds instead of after a full
     # NDK build.
@@ -48,12 +55,20 @@ jobs:
       working-directory: app/src/main/native/rust
       run: |
         cargo fmt --check
-        cargo clippy --all-targets -- -D warnings
-        cargo test
+        cargo clippy --all-targets --locked -- -D warnings
+        cargo test --locked
 
-    - name: Build with Gradle
-      run: ./gradlew --warning-mode all assembleRelease
+    # Host clippy cannot see the cfg(target_os = "android") modules (module.rs,
+    # hook.rs, companion.rs, setfield.rs), so a warning or error there used to
+    # reach a release build unnoticed.
+    - name: Lint the Android-only native code
+      working-directory: app/src/main/native/rust
+      run: |
+        cargo clippy --target aarch64-linux-android --all-targets --locked -- -D warnings
+        cargo clippy --target armv7-linux-androideabi --all-targets --locked -- -D warnings
 
+    # The zip is built from module/module.prop, so label it before Gradle runs;
+    # labelling it afterwards only changed the loose files, not the artifact.
     - name: Label CI version when not a final release code
       run: |
         VERCODE=$(perl -n -e "print \$1 if /^versionCode=(.*)/" module/module.prop)
@@ -61,9 +76,23 @@ jobs:
           perl -pi -e "s/^version=(.*)/version=\$1($VERCODE)-CI #${{ github.run_number }}/" module/module.prop
         fi
 
+    - name: Lint and unit-test the Java half
+      run: ./gradlew --warning-mode all lintRelease testDebugUnitTest
+
+    - name: Build with Gradle
+      run: ./gradlew --warning-mode all assembleRelease
+
+    - name: Verify the module zip
+      run: |
+        unzip -l out/GPhotosUnlimited.zip
+        for f in module.prop classes.dex zygisk/arm64-v8a.so zygisk/armeabi-v7a.so \
+                 META-INF/com/google/android/update-binary; do
+          unzip -Z1 out/GPhotosUnlimited.zip | grep -qx "$f" || { echo "missing $f"; exit 1; }
+        done
+
     - name: Upload CI module zip as artifact zip
       uses: actions/upload-artifact@v7
       with:
         name: GPhotosUnlimited-CI_#${{ github.run_number }}
-        path: 'module/*'
+        path: out/GPhotosUnlimited.zip
         compression-level: 9

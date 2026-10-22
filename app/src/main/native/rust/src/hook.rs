@@ -98,11 +98,7 @@ unsafe extern "C" fn my_system_property_read_callback(
             // unchanged would force us back to a global map to find the
             // callback again, and that map was the leak.
             let mut context = CallContext::new(callback, cookie);
-            original(
-                pi,
-                Some(props::modify_callback),
-                context.as_void_ptr() as *mut c_void,
-            );
+            original(pi, Some(props::modify_callback), context.as_void_ptr());
         }
         _ => original(pi, callback, cookie),
     }

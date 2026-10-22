@@ -1,5 +1,7 @@
 [toolchain]
-channel = "stable"
+# Pinned so a new stable release cannot change the emitted code or clippy
+# results between a local build and CI. Keep the CI workflow's version in sync.
+channel = "1.98.1"
 components = ["rustfmt", "clippy"]
 # Installed automatically by rustup on the first `cargo build`; keeps local
 # builds and CI in sync with the ABIs in app/build.gradle.kts.

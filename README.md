@@ -1,11 +1,14 @@
 # Google Photos Unlimited
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/Rev4N1/GPhotosUnlimited?label=Release&color=blue&style=flat)](https://github.com/Rev4N1/GPhotosUnlimited/releases/latest)
-[![GitHub Release Date](https://img.shields.io/github/release-date/Rev4N1/GPhotosUnlimited?label=Release%20Date&color=brightgreen&style=flat)](https://github.com/Rev4N1/GPhotosUnlimited/releases)  
-[![Main Releases](https://img.shields.io/github/downloads/Rev4N1/GPhotosUnlimited/latest/total?label=Main%20Repo%20Downloads%20%28Latest%20Release%29&color=blue&style=flat)](https://github.com/Rev4N1/GPhotosUnlimited/releases/latest)
-[![Main All Releases](https://img.shields.io/github/downloads/Rev4N1/GPhotosUnlimited/total?label=Main%20Repo%20Total%20Downloads%20%28All%20Releases%29&color=brightgreen&style=flat)](https://github.com/Rev4N1/GPhotosUnlimited/releases)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/HiwaYoshihiro/GPhotosUnlimited_Fork?label=Release&color=blue&style=flat)](https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases/latest)
+[![GitHub Release Date](https://img.shields.io/github/release-date/HiwaYoshihiro/GPhotosUnlimited_Fork?label=Release%20Date&color=brightgreen&style=flat)](https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases)  
+[![Main Releases](https://img.shields.io/github/downloads/HiwaYoshihiro/GPhotosUnlimited_Fork/latest/total?label=Main%20Repo%20Downloads%20%28Latest%20Release%29&color=blue&style=flat)](https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases/latest)
+[![Main All Releases](https://img.shields.io/github/downloads/HiwaYoshihiro/GPhotosUnlimited_Fork/total?label=Main%20Repo%20Total%20Downloads%20%28All%20Releases%29&color=brightgreen&style=flat)](https://github.com/HiwaYoshihiro/GPhotosUnlimited_Fork/releases)
 
 A Zygisk module which gives unlimited Google Photos storage.
+
+> [!IMPORTANT]
+> This fork ships native code for ARM only: `arm64-v8a` and `armeabi-v7a`. The installer refuses to install on x86/x64 devices, where the module could not load.
 
 To use this module you must have one of the following (latest versions):
 
@@ -16,7 +19,7 @@ To use this module you must have one of the following (latest versions):
 
 ## About module
 
-It injects a classes.dex file to modify fields in the android.os.Build class. Also, it creates a hook in the native code to modify system properties, and one on `PackageManager.hasSystemFeature()` to answer the Pixel-exclusive feature checks Google Photos uses to decide the backup tier. These are spoofed only into the Google Photos process, entirely in-process, without mounting or modifying any `/system` files, and with no per-device or per-ROM exception - the same answers are forced on every device and every ROM.
+It injects a classes.dex file to modify fields in the android.os.Build class. It also hooks the native system-property reader and installs a per-process proxy over `IPackageManager` so `PackageManager.hasSystemFeature()` answers the Pixel-exclusive feature checks Google Photos uses to decide the backup tier. These are spoofed only into the Google Photos process, entirely in-process, without mounting or modifying any `/system` files, and with no per-device or per-ROM exception - the same answers are forced on every device and every ROM.
 
 ## Verifying unlimited storage
 
@@ -29,7 +32,7 @@ If a newly backed-up photo *does* count against your storage, clear Google Photo
 
 ## Troubleshooting
 
-Make sure Google Photos (com.google.android.apps.photos) is NOT on the Magisk DenyList if Enforce DenyList is enabled since this interferes with the module. The module no longer changes your DenyList for you; to have it remove Google Photos on each boot, create an empty file at `/data/adb/modules/unlimitedphotos/allow_denylist_fix`. Without that file, check and change it yourself in the Magisk app, or with:
+Make sure Google Photos (com.google.android.apps.photos) is NOT on the Magisk DenyList if Enforce DenyList is enabled since this interferes with the module. The module no longer changes your DenyList for you; to have it remove Google Photos on each boot, create an empty file at `/data/adb/modules/unlimitedphotos/allow_denylist_fix`. That file is kept when the module is updated. Without it, check and change the DenyList yourself in the Magisk app, or with:
 
 ```sh
 su -c "magisk --denylist rm com.google.android.apps.photos"
@@ -48,7 +51,7 @@ You can read module logs using one of these commands directly after boot:
 
 `adb shell "logcat | grep 'FGP/'"` or `su -c "logcat | grep 'FGP/'"`
 
-Add a "verboseLogs" entry with a value of "0", "1", "2", "3" or "100" to your custom.fgp.json to enable higher logging levels; "100" will dump all Build fields, all the system properties, and system features that Photos is checking.
+Add a "verboseLogs" entry with a value of "0", "1", "2", "3" or "100" to your config to enable higher logging levels; "100" will dump all Build fields, all the system properties, and system features that Photos is checking. Because a custom file replaces `fgp.prop`, keep the other entries that are already in it.
 
 ## About spoofing Advanced Settings
 
@@ -57,22 +60,50 @@ The advanced spoofing options add granular control over what exactly gets spoofe
 <details>
 <summary><strong>Details</strong></summary>
 
-- Other than for the "verboseLogs" entry (see above), they are all 0 (disabled) or 1 (enabled).
+- Other than for the "verboseLogs" entry (see above), they are all 0 (disabled) or 1 (enabled). In a JSON config, `false` and `true` are accepted as well.
 
 - The "spoofBuild" entry (default 1) controls spoofing the Build Fields from the fingerprint; the "spoofProps" entry (default 0) controls spoofing the System Properties from the fingerprint; the "spoofProvider" entry (default 0) controls spoofing the Keystore Provider; the "spoofSignature" entry (default 0) controls spoofing the ROM Signature; and the "spoofFeatures" entry (default 1) controls spoofing the Pixel-exclusive features.
 
 </details>
+
+## Configuration files
+
+The module reads the first readable, non-empty file in this order:
+
+1. `/data/adb/modules/unlimitedphotos/custom.fgp.prop`
+2. `/data/adb/modules/unlimitedphotos/custom.fgp.json`
+3. the bundled `fgp.prop`
+
+A custom file **replaces** the bundled file; it is not merged with it. Copy every entry you want to keep from `fgp.prop` (or start from `example.fgp.prop`), otherwise enabling only one spoof toggle can leave nothing to spoof. The module logs a warning when that happens.
+
+Both formats accept the same keys. JSON additionally:
+
+- may contain `//` and `/* */` comments;
+- may use numbers and booleans instead of strings (`"SDK": 28`, `"PIXEL_EXPERIENCE": true`);
+- may start with a UTF-8 BOM.
+
+If a file looks like JSON (starts with `{` or `[`) but does not parse, the module logs the parser error and uses no config instead of misreading the file as `key=value` properties. Check `adb shell "logcat | grep 'FGP/'"` if a config seems to be ignored.
 
 ## Building
 
 The native module is written in Rust; shadowhook (the inline-hook engine) stays C, and the dex-injected half is Java. You need the Android SDK/NDK, JDK 21 and a Rust toolchain with the two Android targets:
 
 ```sh
-rustup target add aarch64-linux-android armv7-linux-androideabi
 ./gradlew assembleRelease
 ```
 
-`rust-toolchain.toml` pins the channel and targets, so `rustup` installs them automatically on the first build. The module zip lands in `out/GPhotosUnlimited.zip`.
+`rust-toolchain.toml` pins the exact toolchain and the two Android targets, so `rustup` installs them automatically on the first build. The module zip lands in `out/GPhotosUnlimited.zip`; `module/module.prop` is the single source of the version shown in the zip and in the APK metadata.
+
+The release build runs `verifyDex`, which uses `dexdump` to check that R8 kept `CustomKeyStoreSpi`, `CustomProvider` and the other reflectively loaded classes. Run the remaining checks with:
+
+```sh
+cd app/src/main/native/rust
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+cd -
+./gradlew lintRelease testDebugUnitTest
+```
 
 Cargo is invoked from CMake with the NDK's own clang wrapper, derived from the toolchain the Gradle build already selected. If `cargo` is not on `PATH` (common on Windows right after installing Rust), CMake also checks `~/.cargo/bin` and you can override it with `-DCARGO_EXECUTABLE=...`.
 

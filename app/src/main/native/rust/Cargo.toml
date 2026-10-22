@@ -1,6 +1,7 @@
 [package]
 name = "unlimitedphotos"
-version = "1.0.0"
+# Tracks module/module.prop; the module version is the user-visible one.
+version = "6.2.0"
 edition = "2021"
 publish = false
 

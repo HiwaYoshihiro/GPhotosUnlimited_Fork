@@ -21,21 +21,21 @@ final class CustomPackageManager implements InvocationHandler {
         if (args != null && args.length > 0 && args[0] instanceof String
                 && "hasSystemFeature".equals(method.getName())) {
             String feature = (String) args[0];
-            Object result = invokeOriginal(method, args);
             String override = EntryPoint.getFeatureOverride(feature);
             if (override != null) {
-                boolean real = Boolean.TRUE.equals(result);
+                // Answer from the config before touching the real
+                // PackageManager. The binder call is unnecessary when the
+                // answer is already known, and it may throw before the
+                // override could be returned.
                 boolean desired = Boolean.parseBoolean(override);
                 if (!"true".equalsIgnoreCase(override) && !"false".equalsIgnoreCase(override)) {
                     EntryPoint.LOG(String.format("[%s]: fgp.prop value '%s' isn't 'true' or 'false', treating as false", feature, override));
-                }
-                if (real != desired) {
-                    EntryPoint.LOG(String.format("[%s]: %b -> %b (fgp.prop)", feature, real, desired));
                 } else if (EntryPoint.getVerboseLogs() > 1) {
-                    EntryPoint.LOG(String.format("[%s]: %b (unchanged, fgp.prop)", feature, real));
+                    EntryPoint.LOG(String.format("[%s]: -> %b (fgp.prop)", feature, desired));
                 }
                 return desired;
             }
+            Object result = invokeOriginal(method, args);
             if (EntryPoint.getVerboseLogs() > 1) {
                 EntryPoint.LOG(String.format("hasSystemFeature('%s'): passthrough -> %s", feature, result));
             }

@@ -82,10 +82,38 @@ public final class EntryPoint {
     }
 
     public static void receiveJson(String data) {
+        map.clear();
+        if (data == null || data.isEmpty()) {
+            LOG("Empty config received from Zygisk");
+            return;
+        }
         try (JsonReader reader = new JsonReader(new StringReader(data))) {
             reader.beginObject();
             while (reader.hasNext()) {
-                map.put(reader.nextName(), reader.nextString());
+                String name = reader.nextName();
+                // nextString() accepts STRING and NUMBER but throws on BOOLEAN
+                // and NULL. A JSON config may legitimately use either (for
+                // example "SDK": 28 or "PIXEL_EXPERIENCE": true), and one such
+                // value used to clear the whole map.
+                switch (reader.peek()) {
+                    case STRING:
+                    case NUMBER:
+                        map.put(name, reader.nextString());
+                        break;
+                    case BOOLEAN:
+                        map.put(name, Boolean.toString(reader.nextBoolean()));
+                        break;
+                    case NULL:
+                        reader.nextNull();
+                        map.put(name, "");
+                        break;
+                    default:
+                        // Arrays and objects are not valid config values. Skip
+                        // one entry instead of discarding the rest of the file.
+                        reader.skipValue();
+                        LOG("Ignoring non-scalar config entry: " + name);
+                        break;
+                }
             }
             reader.endObject();
         } catch (IOException|IllegalStateException e) {
@@ -99,6 +127,10 @@ public final class EntryPoint {
 
         try {
             Provider provider = Security.getProvider(KEYSTORE);
+            if (provider == null) {
+                LOG("Couldn't find the " + KEYSTORE + " provider");
+                return;
+            }
             KeyStore keyStore = KeyStore.getInstance(KEYSTORE);
 
             Field f = keyStore.getClass().getDeclaredField("keyStoreSpi");
@@ -108,7 +140,15 @@ public final class EntryPoint {
 
             CustomProvider customProvider = new CustomProvider(provider);
             Security.removeProvider(KEYSTORE);
-            Security.insertProviderAt(customProvider, 1);
+            if (Security.insertProviderAt(customProvider, 1) < 0) {
+                // Don't leave the process without an AndroidKeyStore provider:
+                // every keystore call would fail for the rest of the process.
+                LOG("Couldn't install the custom provider, restoring the original");
+                if (Security.insertProviderAt(provider, 1) < 0) {
+                    LOG("Couldn't restore the original provider either");
+                }
+                return;
+            }
 
             LOG("Spoof KeyStoreSpi and Provider done!");
 
@@ -228,7 +268,7 @@ public final class EntryPoint {
         throw new NoSuchFieldException("Field '" + fieldName + "' not found in class hierarchy of " + startClass.getName());
     }
 
-    private static boolean classContainsField(Class className, String fieldName) {
+    private static boolean classContainsField(Class<?> className, String fieldName) {
         for (Field field : className.getDeclaredFields()) {
             if (field.getName().equals(fieldName)) return true;
         }
@@ -241,10 +281,7 @@ public final class EntryPoint {
             return;
         }
 
-        Field field = null;
-        String oldValue = null;
-        Object newValue = null;
-
+        Field field;
         try {
             if (classContainsField(Build.class, name)) {
                 field = Build.class.getDeclaredField(name);
@@ -255,44 +292,64 @@ public final class EntryPoint {
                 return;
             }
         } catch (NoSuchFieldException e) {
-            LOG(String.format("Couldn't find '%s' field name: " + e, name));
+            LOG(String.format("Couldn't find '%s' field name: %s", name, e));
             return;
         }
-        field.setAccessible(true);
+
+        // A single inaccessible field must not abort spoofing the rest. On newer
+        // Android releases setAccessible() can throw a RuntimeException.
+        try {
+            field.setAccessible(true);
+        } catch (RuntimeException e) {
+            LOG(String.format("Couldn't make '%s' accessible: %s", name, e));
+            return;
+        }
+
+        // Clearing FINAL is best-effort: the JNI setters below can often still
+        // write a static final field, so don't skip the value when this fails.
         try {
             Field accessFlagsField = Field.class.getDeclaredField("accessFlags");
             accessFlagsField.setAccessible(true);
             accessFlagsField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            LOG(String.format("Couldn't modify accessFlags for '%s': " + e, name));
+        } catch (NoSuchFieldException | IllegalAccessException | RuntimeException e) {
+            LOG(String.format("Couldn't modify accessFlags for '%s': %s", name, e));
         }
+
+        String oldValue;
         try {
             oldValue = String.valueOf(field.get(null));
-        } catch (IllegalAccessException e) {
-            LOG(String.format("Couldn't access '%s' field value: " + e, name));
+        } catch (IllegalAccessException | RuntimeException e) {
+            LOG(String.format("Couldn't access '%s' field value: %s", name, e));
             return;
         }
         if (value.equals(oldValue)) {
             LOG(String.format("[%s]: %s (unchanged)", name, value));
             return;
         }
+
         Class<?> fieldType = field.getType();
-        if (fieldType == String.class) {
-            newValue = value;
-        } else if (fieldType == int.class) {
-            newValue = Integer.parseInt(value);
-        } else if (fieldType == long.class) {
-            newValue = Long.parseLong(value);
-        } else if (fieldType == boolean.class) {
-            newValue = Boolean.parseBoolean(value);
-        } else {
-            LOG(String.format("Couldn't convert '%s' to '%s' type", value, fieldType));
+        Object newValue;
+        try {
+            if (fieldType == String.class) {
+                newValue = value;
+            } else if (fieldType == int.class) {
+                newValue = Integer.parseInt(value);
+            } else if (fieldType == long.class) {
+                newValue = Long.parseLong(value);
+            } else if (fieldType == boolean.class) {
+                newValue = Boolean.parseBoolean(value);
+            } else {
+                LOG(String.format("Couldn't convert '%s' to '%s' type", value, fieldType));
+                return;
+            }
+        } catch (NumberFormatException e) {
+            LOG(String.format("Couldn't parse '%s' for '%s': %s", value, name, e));
             return;
         }
         try {
             setFieldNative(field.getDeclaringClass(), field, fieldType.getName(), newValue);
         } catch (Exception e) {
-            LOG(String.format("Native setField failed for '%s': " + e, name));
+            LOG(String.format("Native setField failed for '%s': %s", name, e));
         }
         LOG(String.format("[%s]: %s -> %s", name, oldValue, value));
     }

@@ -72,10 +72,12 @@ endif()
 
 include(FetchContent)
 
+# Pinned to the v2.0.1 commit and verified by content hash. A movable tag would
+# let a changed upstream rewrite what gets linked into the module.
 FetchContent_Declare(
   shadowhook
-  GIT_REPOSITORY https://github.com/bytedance/android-inline-hook.git
-  GIT_TAG        v2.0.1
+  URL      https://github.com/bytedance/android-inline-hook/archive/e6b23d6883feab6052feff8e3e6959d710845a92.tar.gz
+  URL_HASH SHA256=8ceb6b58c684e2ae8b3b7376a60ab500a21bb6f2f4e0cd33abe8df99da2e3de3
 )
 FetchContent_GetProperties(shadowhook)
 if(NOT shadowhook_POPULATED)
@@ -110,7 +112,7 @@ add_custom_target(unlimitedphotos_rust ALL
     COMMAND ${CMAKE_COMMAND} -E env
             "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
             "${RUST_LINKER_ENV}=${NDK_CLANG}"
-            ${CARGO_EXECUTABLE} build --release --target ${RUST_TRIPLE}
+            ${CARGO_EXECUTABLE} build --locked --release --target ${RUST_TRIPLE}
             --manifest-path ${RUST_DIR}/Cargo.toml
     BYPRODUCTS ${RUST_STATICLIB}
     COMMENT "Building Rust native module for ${RUST_TRIPLE}"

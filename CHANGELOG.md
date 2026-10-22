@@ -1,3 +1,20 @@
+## Google Photos Unlimited v6.2
+
+- Fix the ProGuard rule that let R8 strip `CustomKeyStoreSpi` down to an empty abstract class. The dex installed fine, but `spoofProvider` registered a class with no `engine*` methods, so every AndroidKeyStore operation failed. `CustomProvider`, `CustomPackageInfoCreator` and `CustomPackageManager` are now explicitly kept as well.
+- Add a `verifyDex` build check that fails when a reflectively loaded class or method is missing from the shipped dex.
+- Run clippy against `aarch64-linux-android` and `armv7-linux-androideabi` in CI, not just the host. This caught an `unnecessary_cast` in `hook.rs` that only exists in Android code.
+- Accept JSON numbers and booleans for Advanced Settings, Build fields, properties and feature overrides, not just strings.
+- Ignore a UTF-8 BOM in config files, and refuse to reinterpret broken JSON as `key=value` properties.
+- Ignore an empty custom config instead of letting it shadow the bundled `fgp.prop`, and warn when a custom config leaves nothing to spoof.
+- Make `EntryPoint.setField()` tolerate per-field failures (inaccessible fields, bad numbers) instead of aborting the remaining spoofing.
+- Answer configured feature overrides before calling the PackageManager binder, and restore the original keystore provider if installing the custom one fails.
+- Preserve `allow_denylist_fix` when updating the module, refuse to install on unsupported architectures, and guard the `magisk` command used by `post-fs-data.sh`.
+- Use `HARDWARE=sailfish` in the bundled Pixel profile (it said `marlin`, the Pixel XL codename).
+- Pin shadowhook to the v2.0.1 commit with a SHA-256 content hash, build Cargo with `--locked`, pin the Rust toolchain, and add Gradle wrapper verification.
+- Remove stale `module/zygisk` outputs before packaging, upload the actual module zip from CI, and validate its contents.
+- Read the module version from `module.prop` in Gradle, align `Cargo.toml`, fix the README badges, and document architecture support and config precedence.
+- Add Java unit tests, lint, shellcheck and Dependabot checks to CI.
+
 ## Google Photos Unlimited v6.1
 
 - Build the strings handed to the dex-injected half with `NewString` and UTF-16 instead of `NewStringUTF`. `NewStringUTF` expects modified UTF-8, so a config value containing a character outside the BMP (an emoji, for example) was passed outside the JNI contract.

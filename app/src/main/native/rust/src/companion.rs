@@ -42,9 +42,18 @@ pub unsafe extern "C" fn zygisk_companion_entry(client: c_int) {
 
 /// User config, most specific first: `custom.fgp.prop`, then
 /// `custom.fgp.json`, then the bundled `fgp.prop`.
+///
+/// An empty file is ignored instead of shadowing the next candidate: creating
+/// an empty `custom.fgp.prop` (a common placeholder) used to make the whole
+/// module fail with "Couldn't read config file".
 fn read_config() -> Vec<u8> {
     for path in [CUSTOM_PROP_FILE_PATH, CUSTOM_JSON_FILE_PATH, PROP_FILE_PATH] {
         if let Some(bytes) = read_capped(path, MAX_CONFIG_SIZE) {
+            if bytes.is_empty() {
+                crate::logd!("Ignoring empty config file {path}");
+                continue;
+            }
+            crate::logd!("Using config file {path}");
             return bytes;
         }
     }

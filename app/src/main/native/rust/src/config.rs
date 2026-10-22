@@ -178,11 +178,43 @@ fn strip_comments(text: &str) -> String {
 /// Parses a config document: JSON first (comments allowed), then the legacy
 /// prop format if it does not look like JSON.
 pub fn parse_config(text: &str) -> Value {
-    if let Ok(value) = serde_json::from_str::<Value>(&strip_comments(text)) {
-        return value;
+    // A UTF-8 BOM is common in configs saved by Windows editors. Without this,
+    // serde_json rejects the document and the prop parser turns the BOM and the
+    // opening brace into part of a nonsense property name.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let without_comments = strip_comments(text);
+    match serde_json::from_str::<Value>(&without_comments) {
+        Ok(value) => return value,
+        Err(error) => {
+            // A document that starts like JSON but does not parse is almost
+            // always a typo (a trailing comma, a missing quote). Falling back to
+            // the prop parser would turn its lines into unrelated properties
+            // and silently spoof the wrong values, so report the error and use
+            // no config instead.
+            let trimmed = without_comments.trim_start();
+            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                logd!("Config looks like JSON but could not be parsed: {error}");
+                return Value::Object(Map::new());
+            }
+        }
     }
     logd!("Converting config from prop format to JSON format");
     Value::Object(props_to_json(text))
+}
+
+/// Reads a JSON scalar as text.
+///
+/// Users reasonably write `"SDK": 28` or `"PIXEL_EXPERIENCE": true`; treating
+/// only strings as valid made those entries disappear. Numbers and booleans are
+/// converted with their JSON spelling so the rest of the pipeline still sees
+/// strings.
+fn scalar_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.is_empty() => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(boolean) => Some(boolean.to_string()),
+        _ => None,
+    }
 }
 
 /// Reads one integer "Advanced Settings" entry, if present, then drops it so
@@ -199,6 +231,8 @@ pub fn read_setting(
     };
     let parsed = match value {
         Value::String(text) if !text.is_empty() => parse_int(text),
+        Value::Number(number) => number.as_i64().and_then(|value| i32::try_from(value).ok()),
+        Value::Bool(boolean) => Some(i32::from(*boolean)),
         _ => None,
     };
     match parsed {
@@ -289,25 +323,21 @@ pub fn apply_settings(json: &mut Map<String, Value>, settings: &mut Settings) ->
         // just leave those in json as-is.
         let is_feature = key.bytes().any(|byte| byte.is_ascii_uppercase());
         if is_feature {
-            if !matches!(value, Value::String(text) if !text.is_empty()) {
+            if scalar_to_string(value).is_none() {
                 logd!("{} is empty, skipping", key);
                 erase.push(key.clone());
             }
             continue;
         }
 
-        match value {
-            Value::String(text) => {
-                if text.is_empty() {
-                    logd!("{} is empty, skipping", key);
-                } else {
-                    if settings.verbose_logs > 0 {
-                        logd!("Adding '{}' to properties list", key);
-                    }
-                    props.insert(key.clone(), text.clone());
+        match scalar_to_string(value) {
+            Some(text) => {
+                if settings.verbose_logs > 0 {
+                    logd!("Adding '{}' to properties list", key);
                 }
+                props.insert(key.clone(), text);
             }
-            _ => logd!("Error parsing {}!", key),
+            None => logd!("Error parsing {}!", key),
         }
         erase.push(key.clone());
     }
@@ -315,5 +345,21 @@ pub fn apply_settings(json: &mut Map<String, Value>, settings: &mut Settings) ->
     for key in erase {
         json.remove(&key);
     }
+
+    // A custom config replaces the bundled fgp.prop instead of merging with it,
+    // so a file that only changes one toggle can leave nothing to spoof. That
+    // used to fail silently; say so instead.
+    let build_fields = json.keys().filter(|key| !key.contains(['*', '.'])).count();
+    if settings.spoof_build > 0 && build_fields == 0 {
+        logd!("No Build fields found. A custom config replaces fgp.prop; copy the fields you need into it.");
+    }
+    let feature_count = json
+        .keys()
+        .filter(|key| key.contains(['*', '.']) && key.bytes().any(|byte| byte.is_ascii_uppercase()))
+        .count();
+    if settings.spoof_features > 0 && feature_count == 0 {
+        logd!("No feature overrides found. A custom config replaces fgp.prop; copy the features you need into it.");
+    }
+
     props
 }

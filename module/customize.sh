@@ -1,3 +1,13 @@
+# shellcheck shell=sh
+# The zip only carries arm64-v8a and armeabi-v7a zygisk libraries. Installing
+# on x86/x64 would succeed but leave the module unable to load, so refuse early.
+if [ -n "${ARCH:-}" ]; then
+    case "$ARCH" in
+        arm64|arm) ;;
+        *) abort "! Unsupported architecture: $ARCH (only arm64 and arm are supported)" ;;
+    esac
+fi
+
 OLD_MODPATH=/data/adb/modules/${MODID:-unlimitedphotos}
 
 # Older versions hid conflicting custom ROM injection apps by creating files
@@ -18,7 +28,7 @@ fi
 # Copy any supported custom files to updated module. Skip when the installer
 # updates in place, where source and destination are the same directory.
 if [ "$OLD_MODPATH" != "$MODPATH" ]; then
-    for FILE in custom.fgp.json custom.fgp.prop uninstall.sh; do
+    for FILE in custom.fgp.json custom.fgp.prop allow_denylist_fix uninstall.sh; do
         if [ -f "$OLD_MODPATH/$FILE" ]; then
             ui_print "- Restoring $FILE"
             cp -af "$OLD_MODPATH/$FILE" "$MODPATH/$FILE"
@@ -34,7 +44,7 @@ fi
 
 # Warn if potentially conflicting modules are installed
 for MODULE in Pixelify PixelifyPhotos unlimitedgpics; do
-    if [ -d /data/adb/modules/$MODULE ]; then
+    if [ -d "/data/adb/modules/$MODULE" ]; then
         ui_print "! $MODULE module may cause issues with this module"
     fi
 done
