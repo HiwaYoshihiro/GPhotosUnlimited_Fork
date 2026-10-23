@@ -1,3 +1,12 @@
+## Unreleased
+
+- Rebuild `std` from `rust-src` without its `backtrace` feature and compile shadowhook with `-Oz`. The arm64 library drops from ~480 KB to ~248 KB and armv7 from ~326 KB to ~175 KB; panic messages are kept, backtraces are not. `-PfgoBuildStd=false` links the prebuilt `std` again.
+- Cache the `Build`/`Build.VERSION` field reflection in `EntryPoint`. `CustomProvider.getService()` re-applies every field on each KeyStore lookup, so the class scans, `accessFlags` lookup and `String.format` calls were repeated for all 17 fields.
+- Index `*` property overrides once at install time instead of scanning the whole table on every property read.
+- Stop allocating a lower-cased `String` per stack frame in `CustomKeyStoreSpi.engineGetCertificateChain()`, and warn once per feature when an override is not a boolean instead of on every `hasSystemFeature()` call.
+- Run `dexdump` without `-d` in `verifyDex` (3.3x less output), resolve it across every configured SDK root, and make `./gradlew zip` build the release first instead of copying missing intermediates.
+- CI: cache Gradle, skip the shellcheck install when it is already present, use a shallow checkout and a single Gradle invocation.
+
 ## Google Photos Unlimited v6.2
 
 - Fix the ProGuard rule that let R8 strip `CustomKeyStoreSpi` down to an empty abstract class. The dex installed fine, but `spoofProvider` registered a class with no `engine*` methods, so every AndroidKeyStore operation failed. `CustomProvider`, `CustomPackageInfoCreator` and `CustomPackageManager` are now explicitly kept as well.
