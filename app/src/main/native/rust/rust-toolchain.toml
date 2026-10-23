@@ -2,7 +2,9 @@
 # Pinned so a new stable release cannot change the emitted code or clippy
 # results between a local build and CI. Keep the CI workflow's version in sync.
 channel = "1.98.1"
-components = ["rustfmt", "clippy"]
+# rust-src is needed by the default FGP_BUILD_STD=ON native build, which
+# recompiles std without the backtrace feature (see app/src/main/cpp/CMakeLists.txt).
+components = ["rustfmt", "clippy", "rust-src"]
 # Installed automatically by rustup on the first `cargo build`; keeps local
 # builds and CI in sync with the ABIs in app/build.gradle.kts.
 targets = ["aarch64-linux-android", "armv7-linux-androideabi"]

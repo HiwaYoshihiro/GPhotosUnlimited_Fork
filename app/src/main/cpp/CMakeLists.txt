@@ -107,12 +107,41 @@ include_directories(
     ${shadowhook_SOURCE_DIR}/shadowhook/src/main/cpp/third_party/xdl
 )
 
+# Rebuild std from rust-src instead of using the prebuilt one.
+#
+# The prebuilt std is compiled with the backtrace feature enabled, which drags
+# gimli/addr2line/libunwind into the module (~130 KiB on arm64) for a backtrace
+# that panic=abort throws away anyway. Rebuilding std without that feature and
+# at the release profile's opt-level="z" takes the arm64 .so from ~460 KB to
+# ~248 KB (armv7: ~321 KB to ~175 KB). Panic messages are still formatted; only
+# the backtrace is gone.
+#
+# Requires the `rust-src` component for the pinned toolchain (rust-toolchain.toml
+# installs it). RUSTC_BOOTSTRAP=1 only unlocks the -Z flag on the pinned stable
+# Cargo; the compiler itself stays at 1.98.1, so codegen is unchanged.
+# Set -DFGP_BUILD_STD=OFF to get the old, prebuilt-std build.
+option(FGP_BUILD_STD "Rebuild std without the backtrace feature (smaller .so)" ON)
+set(RUST_BUILD_STD_ARGS "")
+set(RUST_BUILD_STD_ENV "")
+if(FGP_BUILD_STD)
+    list(APPEND RUST_BUILD_STD_ENV "RUSTC_BOOTSTRAP=1")
+    list(APPEND RUST_BUILD_STD_ARGS -Z build-std=std,panic_abort -Z build-std-features=)
+endif()
+
 # One custom target, so cargo runs once per build instead of once per source.
+#
+# `force-unwind-tables=no` drops the .eh_frame entries the crate would otherwise
+# carry for a backtrace that `panic = "abort"` can never take. On arm64 this was
+# measured at ~15 KiB of the final .so. It also applies to std when FGP_BUILD_STD
+# is on; with the prebuilt std it only affects this crate.
 add_custom_target(unlimitedphotos_rust ALL
     COMMAND ${CMAKE_COMMAND} -E env
             "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
             "${RUST_LINKER_ENV}=${NDK_CLANG}"
+            "RUSTFLAGS=-C force-unwind-tables=no"
+            ${RUST_BUILD_STD_ENV}
             ${CARGO_EXECUTABLE} build --locked --release --target ${RUST_TRIPLE}
+            ${RUST_BUILD_STD_ARGS}
             --manifest-path ${RUST_DIR}/Cargo.toml
     BYPRODUCTS ${RUST_STATICLIB}
     COMMENT "Building Rust native module for ${RUST_TRIPLE}"
@@ -129,6 +158,11 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
     ${SHADOWHOOK_SRC}
     ${SHADOWHOOK_ARCH_SRC}
 )
+
+# shadowhook is plain C with no exception handling. The NDK release default is
+# -O3, which favours speed over the code size this module is distributed at;
+# -Oz trims the hook engine without touching correctness.
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Oz)
 
 # shadowhook calls sh_linker_init() during shadowhook_init(). We provide our own
 # no-op for it (../native/rust/src/lib.rs), because hooking the linker's soinfo

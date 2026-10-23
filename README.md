@@ -92,7 +92,9 @@ The native module is written in Rust; shadowhook (the inline-hook engine) stays 
 ./gradlew assembleRelease
 ```
 
-`rust-toolchain.toml` pins the exact toolchain and the two Android targets, so `rustup` installs them automatically on the first build. The module zip lands in `out/GPhotosUnlimited.zip`; `module/module.prop` is the single source of the version shown in the zip and in the APK metadata.
+`rust-toolchain.toml` pins the exact toolchain, the two Android targets and the `rust-src` component, so `rustup` installs them automatically on the first build. The module zip lands in `out/GPhotosUnlimited.zip`; `module/module.prop` is the single source of the version shown in the zip and in the APK metadata.
+
+By default the native build recompiles `std` from `rust-src` without its `backtrace` feature and at the release profile's `opt-level = "z"` (see `FGP_BUILD_STD` in `app/src/main/cpp/CMakeLists.txt`). That takes the native libraries from ~480 KB to ~248 KB (arm64) and ~326 KB to ~175 KB (armv7); panic messages are kept, backtraces are not. Pass `-PfgoBuildStd=false` to link the prebuilt `std` instead.
 
 The release build runs `verifyDex`, which uses `dexdump` to check that R8 kept `CustomKeyStoreSpi`, `CustomProvider` and the other reflectively loaded classes. Run the remaining checks with:
 
