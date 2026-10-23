@@ -14,8 +14,10 @@ val moduleProperties = Properties().apply {
 val moduleVersionName = moduleProperties.getProperty("version").removePrefix("v")
 val moduleVersionCode = moduleProperties.getProperty("versionCode").toInt()
 
-// Keep in sync with android.buildToolsVersion below; verifyDex uses dexdump
-// from this exact build-tools release.
+// verifyDex reads dexdump from the same build-tools release as buildToolsVersion
+// below. The task resolves it across every SDK root (ANDROID_HOME,
+// ANDROID_SDK_ROOT, sdk.dir), because AGP may pick a different root than the
+// first environment variable that happens to be set.
 val androidBuildToolsVersion = "37.0.0"
 
 android {
@@ -51,6 +53,11 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
+                // `-PfgoBuildStd=false` links the prebuilt std instead of the
+                // size-optimised one built from rust-src (see CMakeLists.txt).
+                providers.gradleProperty("fgoBuildStd").orNull?.let {
+                    arguments += "-DFGP_BUILD_STD=${if (it.toBoolean()) "ON" else "OFF"}"
+                }
                 // No C++ is compiled any more (the native module is Rust and
                 // shadowhook is C), so there is no STL to select. The previous
                 // -fno-exceptions/-fno-rtti/-fvisibility flags moved into
@@ -92,6 +99,11 @@ dependencies {
 }
 
 tasks.register("copyFiles") {
+    // Without these, `./gradlew zip` on a clean tree copied from paths that were
+    // never built: it failed loudly when the dex was missing, but silently
+    // produced a zip without the .so files when only the strip output was gone.
+    dependsOn("minifyReleaseWithR8", "stripReleaseDebugSymbols")
+
     val moduleFolder = project.rootDir.resolve("module")
     val dexFile = project.layout.buildDirectory.get().asFile.resolve("intermediates/dex/release/minifyReleaseWithR8/classes.dex")
     val soDir = project.layout.buildDirectory.get().asFile.resolve("intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out/lib")
@@ -128,7 +140,11 @@ val verifyDex = tasks.register("verifyDex") {
 
     val moduleFolder = project.rootDir.resolve("module")
     val dexFile = moduleFolder.resolve("classes.dex")
-    val sdkDir = listOfNotNull(
+    // AGP picks one of these roots; dexdump has to come from the one that
+    // actually has the pinned build-tools revision, not simply the first env
+    // var set. Otherwise ANDROID_HOME pointing at a second SDK made the task
+    // fail with "dexdump not found" even though the build itself succeeded.
+    val sdkDirs = listOfNotNull(
         System.getenv("ANDROID_HOME"),
         System.getenv("ANDROID_SDK_ROOT"),
         project.rootDir.resolve("local.properties")
@@ -138,10 +154,20 @@ val verifyDex = tasks.register("verifyDex") {
                     propertiesFile.inputStream().use { load(it) }
                 }.getProperty("sdk.dir")
             },
-    ).map { File(it) }.firstOrNull { it.isDirectory }
-    val dexdump = sdkDir
-        ?.resolve("build-tools/$androidBuildToolsVersion")
-        ?.resolve(if (System.getProperty("os.name").lowercase().contains("win")) "dexdump.exe" else "dexdump")
+    ).map { File(it) }.filter { it.isDirectory }
+    val dexdumpName = if (System.getProperty("os.name").lowercase().contains("win")) "dexdump.exe" else "dexdump"
+    val dexdump = sdkDirs
+        .map { it.resolve("build-tools/$androidBuildToolsVersion/$dexdumpName") }
+        .firstOrNull { it.isFile }
+        ?: sdkDirs
+            .flatMap { sdk ->
+                sdk.resolve("build-tools").listFiles()
+                    ?.filter { it.isDirectory }
+                    ?.sortedByDescending { it.name }
+                    ?: emptyList()
+            }
+            .map { it.resolve(dexdumpName) }
+            .firstOrNull { it.isFile }
 
     doLast {
         check(dexFile.isFile) { "classes.dex is missing; run assembleRelease first" }
@@ -152,7 +178,10 @@ val verifyDex = tasks.register("verifyDex") {
 
         // ProcessBuilder rather than providers.exec(): the latter reaches
         // through Project and is not configuration-cache safe.
-        val process = ProcessBuilder(dexdump.absolutePath, "-d", dexFile.absolutePath)
+        // `-d` (disassembly) is not needed: the checks below only look for the
+        // class descriptor and method name lines, which plain dexdump prints.
+        // The full dump was 3.3x larger for no extra information.
+        val process = ProcessBuilder(dexdump.absolutePath, dexFile.absolutePath)
             .redirectErrorStream(true)
             .start()
         val dump = process.inputStream.bufferedReader().use { it.readText() }

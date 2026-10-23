@@ -6,6 +6,12 @@
 //! JNI environment. The `new_string` tests use a hand-built function table for
 //! the same reason.
 
+// The initializers below are already `const { ... }` blocks. Clippy 1.98 still
+// reports them as "can be made const" when compiling for the Android targets
+// (it does not for the host), which turns the cross-target `-D warnings` run
+// red. Drop this allow when the pinned toolchain is bumped.
+#![allow(clippy::missing_const_for_thread_local)]
+
 use core::mem;
 use std::cell::RefCell;
 

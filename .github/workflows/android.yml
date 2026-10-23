@@ -17,8 +17,6 @@ jobs:
     steps:
     - name: Check out
       uses: actions/checkout@v7
-      with:
-        fetch-depth: 0
 
     - name: Set up JDK
       uses: actions/setup-java@v6
@@ -26,13 +24,19 @@ jobs:
         distribution: 'temurin'
         java-version: 21
 
+    # Caches the wrapper distribution and the dependency cache between runs;
+    # without it every macOS job resolved AGP and JUnit from scratch.
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v6
+
     # rust-toolchain.toml pins the channel and the Android targets, but it lives
     # in the crate directory, so the version is repeated here for the action.
+    # rust-src is required by the native build (FGP_BUILD_STD).
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: 1.98.1
-        components: rustfmt, clippy
+        components: rustfmt, clippy, rust-src
         targets: aarch64-linux-android,armv7-linux-androideabi
 
     - name: Cache Rust build
@@ -45,7 +49,7 @@ jobs:
 
     - name: Lint the module scripts
       run: |
-        brew install shellcheck
+        command -v shellcheck >/dev/null 2>&1 || brew install shellcheck
         shellcheck -x -S warning module/*.sh
 
     # Cheap host-compiled checks first: the ABI layout assertions and the
@@ -76,11 +80,11 @@ jobs:
           perl -pi -e "s/^version=(.*)/version=\$1($VERCODE)-CI #${{ github.run_number }}/" module/module.prop
         fi
 
-    - name: Lint and unit-test the Java half
-      run: ./gradlew --warning-mode all lintRelease testDebugUnitTest
-
-    - name: Build with Gradle
-      run: ./gradlew --warning-mode all assembleRelease
+    # One Gradle invocation: lint, unit tests and the release build share the
+    # configuration phase and the daemon. assembleRelease's finalizers still run
+    # copyFiles/verifyDex/zip afterwards.
+    - name: Lint, test and build with Gradle
+      run: ./gradlew --warning-mode all lintRelease testDebugUnitTest assembleRelease
 
     - name: Verify the module zip
       run: |
