@@ -3,6 +3,8 @@ package com.rev4n.unlimitedphotos;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Answers Google Photos' Pixel feature queries as configured in fgp.prop, purely per-process via
@@ -11,6 +13,12 @@ import java.lang.reflect.Method;
 final class CustomPackageManager implements InvocationHandler {
 
     private final Object original;
+
+    /**
+     * Features whose configured value was not a boolean. One log line is
+     * enough; repeating it on every hasSystemFeature() call flooded logcat.
+     */
+    private static final Set<String> warned = ConcurrentHashMap.newKeySet();
 
     CustomPackageManager(Object original) {
         this.original = original;
@@ -29,7 +37,9 @@ final class CustomPackageManager implements InvocationHandler {
                 // override could be returned.
                 boolean desired = Boolean.parseBoolean(override);
                 if (!"true".equalsIgnoreCase(override) && !"false".equalsIgnoreCase(override)) {
-                    EntryPoint.LOG(String.format("[%s]: fgp.prop value '%s' isn't 'true' or 'false', treating as false", feature, override));
+                    if (warned.add(feature)) {
+                        EntryPoint.LOG(String.format("[%s]: fgp.prop value '%s' isn't 'true' or 'false', treating as false", feature, override));
+                    }
                 } else if (EntryPoint.getVerboseLogs() > 1) {
                     EntryPoint.LOG(String.format("[%s]: -> %b (fgp.prop)", feature, desired));
                 }

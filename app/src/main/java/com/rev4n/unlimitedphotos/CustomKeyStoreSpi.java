@@ -12,10 +12,17 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.Locale;
 
 public final class CustomKeyStoreSpi extends KeyStoreSpi {
     public static volatile KeyStoreSpi keyStoreSpi;
+
+    /** Case-insensitive {@code contains} without allocating a lower-cased copy. */
+    private static boolean containsIgnoreCase(String haystack, String needle) {
+        for (int i = 0; i + needle.length() <= haystack.length(); i++) {
+            if (haystack.regionMatches(true, i, needle, 0, needle.length())) return true;
+        }
+        return false;
+    }
 
     @Override
     public Key engineGetKey(String alias, char[] password) throws NoSuchAlgorithmException, UnrecoverableKeyException {
@@ -24,8 +31,11 @@ public final class CustomKeyStoreSpi extends KeyStoreSpi {
 
     @Override
     public Certificate[] engineGetCertificateChain(String alias) {
+        // Every call walks the whole stack. Lower-casing each frame's class name
+        // allocated one String per frame; regionMatches does the same comparison
+        // in place.
         for (StackTraceElement e : Thread.currentThread().getStackTrace()) {
-            if (e.getClassName().toLowerCase(Locale.ROOT).contains("droidguard")) {
+            if (containsIgnoreCase(e.getClassName(), "droidguard")) {
                 EntryPoint.LOG("DroidGuard detected!");
                 throw new UnsupportedOperationException();
             }

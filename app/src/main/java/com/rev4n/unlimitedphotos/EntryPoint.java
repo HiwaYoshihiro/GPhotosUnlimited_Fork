@@ -25,6 +25,7 @@ import java.security.Provider;
 import java.security.Security;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class EntryPoint {
     private static Integer verboseLogs = 0;
@@ -59,6 +60,15 @@ public final class EntryPoint {
             "F7Xt\n";
 
     private static final Map<String, String> map = new HashMap<>();
+
+    /**
+     * Build fields resolved and made writable once, keyed by field name.
+     * {@code CustomProvider.getService()} re-applies every field on each
+     * KeyStore lookup, so repeating the reflection — including the accessFlags
+     * lookup and the class scan — was pure overhead.
+     */
+    private static final Map<String, Field> fieldCache = new ConcurrentHashMap<>();
+    private static volatile Field accessFlagsField;
 
     public static Integer getVerboseLogs() {
         return verboseLogs;
@@ -162,9 +172,10 @@ public final class EntryPoint {
     }
 
     static void spoofDevice() {
-        for (String key : map.keySet()) {
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            String key = entry.getKey();
             if (key.indexOf('.') >= 0 || key.indexOf('*') >= 0) continue; // feature name, not a Build field
-            setField(key, map.get(key));
+            setField(key, entry.getValue());
         }
     }
 
@@ -275,25 +286,36 @@ public final class EntryPoint {
         return false;
     }
 
-    private static void setField(String name, String value) {
-        if (value.isEmpty()) {
-            LOG(String.format("%s is empty, skipping", name));
-            return;
+    /**
+     * Resolves a Build / Build.VERSION field and makes it writable, once.
+     *
+     * <p>Called for every field on every KeyStore service lookup, so the result
+     * is cached. A field that cannot be prepared is not cached: a later retry
+     * costs one class scan, and the failure stays visible instead of being
+     * remembered forever.
+     */
+    private static Field resolveField(String name) {
+        Field cached = fieldCache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+
+        Class<?> owner;
+        if (classContainsField(Build.class, name)) {
+            owner = Build.class;
+        } else if (classContainsField(Build.VERSION.class, name)) {
+            owner = Build.VERSION.class;
+        } else {
+            if (verboseLogs > 1) LOG(String.format("Couldn't determine '%s' class name", name));
+            return null;
         }
 
         Field field;
         try {
-            if (classContainsField(Build.class, name)) {
-                field = Build.class.getDeclaredField(name);
-            } else if (classContainsField(Build.VERSION.class, name)) {
-                field = Build.VERSION.class.getDeclaredField(name);
-            } else {
-                if (verboseLogs > 1) LOG(String.format("Couldn't determine '%s' class name", name));
-                return;
-            }
+            field = owner.getDeclaredField(name);
         } catch (NoSuchFieldException e) {
             LOG(String.format("Couldn't find '%s' field name: %s", name, e));
-            return;
+            return null;
         }
 
         // A single inaccessible field must not abort spoofing the rest. On newer
@@ -302,17 +324,38 @@ public final class EntryPoint {
             field.setAccessible(true);
         } catch (RuntimeException e) {
             LOG(String.format("Couldn't make '%s' accessible: %s", name, e));
-            return;
+            return null;
         }
 
         // Clearing FINAL is best-effort: the JNI setters below can often still
         // write a static final field, so don't skip the value when this fails.
+        // The flag lives on this Field instance and stays clear, so doing it
+        // during resolution is enough.
         try {
-            Field accessFlagsField = Field.class.getDeclaredField("accessFlags");
-            accessFlagsField.setAccessible(true);
-            accessFlagsField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+            Field flags = accessFlagsField;
+            if (flags == null) {
+                flags = Field.class.getDeclaredField("accessFlags");
+                flags.setAccessible(true);
+                accessFlagsField = flags;
+            }
+            flags.setInt(field, field.getModifiers() & ~Modifier.FINAL);
         } catch (NoSuchFieldException | IllegalAccessException | RuntimeException e) {
             LOG(String.format("Couldn't modify accessFlags for '%s': %s", name, e));
+        }
+
+        fieldCache.put(name, field);
+        return field;
+    }
+
+    private static void setField(String name, String value) {
+        if (value.isEmpty()) {
+            LOG(String.format("%s is empty, skipping", name));
+            return;
+        }
+
+        Field field = resolveField(name);
+        if (field == null) {
+            return;
         }
 
         String oldValue;
@@ -323,7 +366,10 @@ public final class EntryPoint {
             return;
         }
         if (value.equals(oldValue)) {
-            LOG(String.format("[%s]: %s (unchanged)", name, value));
+            // getService() re-applies every Build field, so after the first
+            // write this branch runs on every KeyStore lookup. Only worth
+            // printing when verbose logging was asked for.
+            if (verboseLogs > 1) LOG(String.format("[%s]: %s (unchanged)", name, value));
             return;
         }
 
