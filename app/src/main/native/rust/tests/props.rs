@@ -9,7 +9,7 @@ use std::ffi::{CStr, CString};
 
 use serde_json::Value;
 use unlimitedphotos::config::{parse_config, parse_int};
-use unlimitedphotos::props::{modify_callback, resolve, CallContext, PropertyCallback};
+use unlimitedphotos::props::{modify_callback, CallContext, PropertyCallback, PropertyTable};
 
 #[test]
 fn json_comments_are_stripped_around_unicode_values() {
@@ -187,14 +187,16 @@ fn resolve_prefers_exact_then_first_sorted_wildcard() {
     props.insert("*build.type".to_string(), CString::new("wild").unwrap());
     props.insert("*type".to_string(), CString::new("generic").unwrap());
 
-    let exact = resolve(&props, "ro.build.type").unwrap();
+    let table = PropertyTable::new(props);
+
+    let exact = table.resolve("ro.build.type").unwrap();
     assert_eq!(unsafe { CStr::from_ptr(exact) }.to_str(), Ok("exact"));
 
     // `*build.type` sorts before `*type`, and the first match wins.
-    let wild = resolve(&props, "ro.product.build.type").unwrap();
+    let wild = table.resolve("ro.product.build.type").unwrap();
     assert_eq!(unsafe { CStr::from_ptr(wild) }.to_str(), Ok("wild"));
 
-    assert!(resolve(&props, "ro.unrelated").is_none());
+    assert!(table.resolve("ro.unrelated").is_none());
 }
 
 #[test]
@@ -203,5 +205,20 @@ fn wildcard_needs_a_leading_star() {
     // A key without `*` must never match as a suffix rule; only exact.
     props.insert("build.type".to_string(), CString::new("no-star").unwrap());
 
-    assert!(resolve(&props, "ro.build.type").is_none());
+    let table = PropertyTable::new(props);
+
+    assert!(table.resolve("ro.build.type").is_none());
+}
+
+#[test]
+fn a_bare_star_matches_every_property() {
+    // `*` has an empty suffix, so it matches everything. `BTreeMap` order puts
+    // it first, which is what makes it a catch-all rather than a dead entry.
+    let mut props = std::collections::BTreeMap::new();
+    props.insert("*".to_string(), CString::new("all").unwrap());
+    props.insert("*build.type".to_string(), CString::new("build").unwrap());
+
+    let table = PropertyTable::new(props);
+    let matched = table.resolve("ro.build.type").unwrap();
+    assert_eq!(unsafe { CStr::from_ptr(matched) }.to_str(), Ok("all"));
 }

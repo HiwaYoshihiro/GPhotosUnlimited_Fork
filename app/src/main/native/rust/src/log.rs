@@ -20,7 +20,11 @@ pub fn log_args(args: fmt::Arguments) {
     // it, which matters when logging a malformed property value. The message is
     // formatted on the Rust side and passed as a `%s` argument, so a spoofed
     // property value can never be interpreted as a format string.
-    let message = args.to_string().replace('\0', "\\0");
+    let mut message = args.to_string();
+    // The common case has no NUL; skip the second allocation when so.
+    if message.contains('\0') {
+        message = message.replace('\0', "\\0");
+    }
     let Ok(message) = CString::new(message) else {
         return;
     };

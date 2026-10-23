@@ -44,7 +44,43 @@ impl CallContext {
 ///
 /// Values are `CString` so the `const char *` handed to the platform points
 /// into storage that lives as long as the process does.
-static PROPS: OnceLock<BTreeMap<String, CString>> = OnceLock::new();
+///
+/// Wildcard keys are indexed once, at install time. A property read that misses
+/// the exact map used to walk every entry (Build fields, feature overrides and
+/// wildcards) looking for the first `*` suffix; now it walks only the wildcard
+/// entries, in the same `BTreeMap` order, so the winner is unchanged.
+pub struct PropertyTable {
+    props: BTreeMap<String, CString>,
+    /// `(full key, suffix without the leading '*')`, in key order.
+    wildcards: Vec<(String, String)>,
+}
+
+impl PropertyTable {
+    pub fn new(props: BTreeMap<String, CString>) -> Self {
+        let wildcards = props
+            .keys()
+            .filter_map(|key| {
+                key.strip_prefix('*')
+                    .map(|suffix| (key.clone(), suffix.to_string()))
+            })
+            .collect();
+        Self { props, wildcards }
+    }
+
+    /// The override for `name`, exact match first, then the first wildcard match.
+    pub fn resolve(&self, name: &str) -> Option<*const c_char> {
+        if let Some(value) = self.props.get(name) {
+            return Some(value.as_ptr());
+        }
+        self.wildcards
+            .iter()
+            .find(|(_, suffix)| name.ends_with(suffix.as_str()))
+            .and_then(|(key, _)| self.props.get(key))
+            .map(|value| value.as_ptr())
+    }
+}
+
+static PROPS: OnceLock<PropertyTable> = OnceLock::new();
 static VERBOSE: AtomicI32 = AtomicI32::new(0);
 
 pub fn set_verbose(level: i32) {
@@ -54,7 +90,7 @@ pub fn set_verbose(level: i32) {
 /// Installs the table. A second call is ignored: the hook is installed once per
 /// process, and replacing the map would invalidate pointers already handed out.
 pub fn install_props(props: Props) {
-    let _ = PROPS.set(
+    let _ = PROPS.set(PropertyTable::new(
         props
             .into_iter()
             // An interior NUL cannot be represented in a `CString`. `c_str()`
@@ -69,27 +105,7 @@ pub fn install_props(props: Props) {
                 (name, CString::new(value).unwrap_or_default())
             })
             .collect(),
-    );
-}
-
-/// The override for `name`, exact match first, then the first wildcard match.
-pub fn resolve(props: &BTreeMap<String, CString>, name: &str) -> Option<*const c_char> {
-    props
-        .get(name)
-        .map(|value| value.as_ptr())
-        .or_else(|| wildcard(props, name))
-}
-
-/// Leading `*` wildcard match. `BTreeMap` keeps the same sorted order
-/// `std::map` had, so the first matching wildcard is still the winner.
-fn wildcard(props: &BTreeMap<String, CString>, name: &str) -> Option<*const c_char> {
-    props
-        .iter()
-        .find(|(key, _)| match key.strip_prefix('*') {
-            Some(suffix) => name.ends_with(suffix),
-            None => false,
-        })
-        .map(|(_, value)| value.as_ptr())
+    ));
 }
 
 /// The callback installed in place of the caller's.
@@ -118,7 +134,7 @@ pub unsafe extern "C" fn modify_callback(
     let prop = CStr::from_ptr(name).to_string_lossy();
     let new_value = PROPS
         .get()
-        .and_then(|props| resolve(props, &prop))
+        .and_then(|table| table.resolve(&prop))
         .unwrap_or(value);
 
     // Pointer identity, as in the original: "unchanged" means no override was
